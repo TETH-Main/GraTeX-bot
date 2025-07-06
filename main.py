@@ -126,20 +126,6 @@ class GraTeXBot:
             # ズームレベルを適用
             if zoom_level != 0:
                 await self.apply_zoom_level(zoom_level)
-            else:
-                # デフォルトビューポート（-10~10）を設定
-                await self.page.evaluate('''
-                    () => {
-                        if (window.GraTeX && window.GraTeX.calculator2D) {
-                            window.GraTeX.calculator2D.setMathBounds({
-                                left: -10,
-                                right: 10,
-                                bottom: -10,
-                                top: 10
-                            });
-                        }
-                    }
-                ''')
             
             # 現在のズームレベルを更新
             self.current_zoom_level = zoom_level
