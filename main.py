@@ -1,5 +1,6 @@
 import discord
 from discord.ext import commands
+from discord import app_commands
 import asyncio
 import base64
 import io
@@ -492,9 +493,39 @@ async def on_ready():
         logger.error(f"初期化エラー: {e}")
 
 @bot.tree.command(name="gratex", description="LaTeX式からグラフを生成します")
+@app_commands.describe(
+    latex="LaTeX式またはDesmos記法の数式（例: y = sin(x), z = x^2 + y^2）",
+    mode="グラフの種類（2D または 3D）",
+    label_size="軸ラベルのサイズ",
+    zoom_level="ズームレベル（2Dのみ、-3～3）"
+)
+@app_commands.choices(
+    mode=[
+        app_commands.Choice(name="2D グラフ", value="2d"),
+        app_commands.Choice(name="3D グラフ", value="3d")
+    ],
+    label_size=[
+        app_commands.Choice(name="極小 (1)", value=1),
+        app_commands.Choice(name="小 (2)", value=2),
+        app_commands.Choice(name="中小 (3)", value=3),
+        app_commands.Choice(name="標準 (4)", value=4),
+        app_commands.Choice(name="大 (6)", value=6),
+        app_commands.Choice(name="極大 (8)", value=8)
+    ],
+    zoom_level=[
+        app_commands.Choice(name="縮小 -3", value=-3),
+        app_commands.Choice(name="縮小 -2", value=-2),
+        app_commands.Choice(name="縮小 -1", value=-1),
+        app_commands.Choice(name="標準 0", value=0),
+        app_commands.Choice(name="拡大 +1", value=1),
+        app_commands.Choice(name="拡大 +2", value=2),
+        app_commands.Choice(name="拡大 +3", value=3)
+    ]
+)
 async def gratex_slash(
     interaction: discord.Interaction, 
     latex: str, 
+    mode: str = "2d",
     label_size: int = 4, 
     zoom_level: int = 0
 ):
@@ -503,11 +534,16 @@ async def gratex_slash(
     
     Parameters:
     - latex: LaTeX式またはDesmos記法の数式
+    - mode: グラフモード（"2d" または "3d"）
     - label_size: ラベルサイズ（1, 2, 3, 4, 6, 8）
-    - zoom_level: ズームレベル（負数で縮小、正数で拡大）
+    - zoom_level: ズームレベル（2Dのみ、負数で縮小、正数で拡大）
     """
     
     # パラメータ検証
+    if mode.lower() not in ["2d", "3d"]:
+        await interaction.response.send_message("❌ モードは '2d' または '3d' を指定してください", ephemeral=True)
+        return
+    
     if label_size not in [1, 2, 3, 4, 6, 8]:
         await interaction.response.send_message("❌ ラベルサイズは 1, 2, 3, 4, 6, 8 のいずれかを指定してください", ephemeral=True)
         return
@@ -516,50 +552,76 @@ async def gratex_slash(
         await interaction.response.send_message("❌ LaTeX式を入力してください", ephemeral=True)
         return
     
-    if zoom_level < -3 or zoom_level > 3:
+    # 3Dモードの場合はzoom_levelを無視
+    if mode.lower() == "3d" and zoom_level != 0:
+        await interaction.response.send_message("ℹ️ 3Dモードではズームレベルは無視されます", ephemeral=True)
+        zoom_level = 0
+    
+    if mode.lower() == "2d" and (zoom_level < -3 or zoom_level > 3):
         await interaction.response.send_message("❌ ズームレベルは -3 から 3 の範囲で指定してください", ephemeral=True)
         return
     
     try:
         # 処理中メッセージ
-        await interaction.response.send_message("🎨 GraTeXでグラフを生成中...")
+        mode_text = "2D" if mode.lower() == "2d" else "3D"
+        await interaction.response.send_message(f"🎨 GraTeXで{mode_text}グラフを生成中...")
         
-        # グラフ生成
-        image_buffer = await gratex_bot.generate_graph(latex, label_size, zoom_level)
+        # モードに応じてグラフ生成
+        if mode.lower() == "2d":
+            image_buffer = await gratex_bot.generate_graph(latex, label_size, zoom_level)
+            
+            # ズームレベル情報
+            zoom_info = ""
+            if zoom_level > 0:
+                zoom_info = f" (拡大 x{2**zoom_level})"
+            elif zoom_level < 0:
+                zoom_info = f" (縮小 x{2**abs(zoom_level)})"
+            
+            # 結果を送信
+            embed = discord.Embed(
+                title="📊 GraTeX 2Dグラフ",
+                description=f"**LaTeX式:** `{latex}`\n**ラベルサイズ:** {label_size}\n**ズームレベル:** {zoom_level}{zoom_info}",
+                color=0x00ff00
+            )
+            embed.set_footer(text="Powered by GraTeX 2D")
+            
+            # リアクションを追加（2D用）
+            reactions = ['1⃣', '2⃣', '3⃣', '4⃣', '6⃣', '8⃣', '🔍', '🔭', '✅', '🚮']
+            
+        else:  # 3Dモード
+            image_buffer = await gratex_bot.generate_3d_graph(latex, label_size)
+            
+            # 結果を送信
+            embed = discord.Embed(
+                title="📊 GraTeX 3Dグラフ",
+                description=f"**LaTeX式:** `{latex}`\n**ラベルサイズ:** {label_size}\n**モード:** 3D",
+                color=0x0099ff
+            )
+            embed.set_footer(text="Powered by GraTeX 3D")
+            
+            # リアクションを追加（3D用）
+            reactions = ['1⃣', '2⃣', '3⃣', '4⃣', '6⃣', '8⃣', '🔄', '✅', '🚮']
         
         # Discord画像ファイルを作成
-        file = discord.File(image_buffer, filename=f"gratex_graph.png")
-        
-        # ズームレベル情報
-        zoom_info = ""
-        if zoom_level > 0:
-            zoom_info = f" (拡大 x{2**zoom_level})"
-        elif zoom_level < 0:
-            zoom_info = f" (縮小 x{2**abs(zoom_level)})"
-        
-        # 結果を送信
-        embed = discord.Embed(
-            title="📊 GraTeX グラフ",
-            description=f"**LaTeX式:** `{latex}`\n**ラベルサイズ:** {label_size}\n**ズームレベル:** {zoom_level}{zoom_info}",
-            color=0x00ff00
-        )
-        embed.set_image(url="attachment://gratex_graph.png")
-        embed.set_footer(text="Powered by GraTeX")
+        file = discord.File(image_buffer, filename=f"gratex_{mode.lower()}_graph.png")
+        embed.set_image(url=f"attachment://gratex_{mode.lower()}_graph.png")
         
         # フォローアップメッセージで画像を送信
         message = await interaction.followup.send(file=file, embed=embed)
         
-        # リアクションを追加（ラベルサイズ変更用 + ズーム機能）
-        reactions = ['1⃣', '2⃣', '3⃣', '4⃣', '6⃣', '8⃣', '🔍', '🔭', '✅', '🚮']
+        # リアクションを追加
         for reaction in reactions:
             await message.add_reaction(reaction)
         
         # リアクション処理を設定
-        await setup_reaction_handler_slash(interaction, message, latex, label_size)
+        if mode.lower() == "2d":
+            await setup_reaction_handler_slash(interaction, message, latex, label_size)
+        else:
+            await setup_reaction_handler_3d(interaction, message, latex, label_size)
         
     except Exception as e:
-        logger.error(f"グラフ生成エラー: {e}")
-        await interaction.followup.send(f"❌ グラフの生成に失敗しました: {str(e)}")
+        logger.error(f"{mode_text}グラフ生成エラー: {e}")
+        await interaction.followup.send(f"❌ {mode_text}グラフの生成に失敗しました: {str(e)}")
 
 async def setup_reaction_handler_slash(interaction, message, latex_expression, current_label_size):
     """スラッシュコマンド用のリアクション処理のセットアップ"""
@@ -859,83 +921,6 @@ async def on_disconnect():
     """Bot切断時のクリーンアップ"""
     await gratex_bot.close()
 
-# Keep-alive用サーバーを起動
-from server import keep_alive
-
-if __name__ == "__main__":
-    # サーバーを起動
-    keep_alive()
-    
-    # Botを起動
-    token = os.getenv('TOKEN')
-    if not token:
-        raise ValueError("Discord Bot Token が設定されていません")
-    
-    try:
-        bot.run(token)
-    except KeyboardInterrupt:
-        logger.info("Bot を停止しています...")
-    finally:
-        # クリーンアップ
-        asyncio.run(gratex_bot.close())
-
-@bot.tree.command(name="gratex3d", description="LaTeX式から3Dグラフを生成します")
-async def gratex3d_slash(
-    interaction: discord.Interaction, 
-    latex: str, 
-    label_size: int = 4
-):
-    """
-    スラッシュコマンド: LaTeX式から3Dグラフを生成
-    
-    Parameters:
-    - latex: LaTeX式またはDesmos記法の3D数式
-    - label_size: ラベルサイズ（1, 2, 3, 4, 6, 8）
-    """
-    
-    # パラメータ検証
-    if label_size not in [1, 2, 3, 4, 6, 8]:
-        await interaction.response.send_message("❌ ラベルサイズは 1, 2, 3, 4, 6, 8 のいずれかを指定してください", ephemeral=True)
-        return
-    
-    if not latex.strip():
-        await interaction.response.send_message("❌ LaTeX式を入力してください", ephemeral=True)
-        return
-    
-    try:
-        # 処理中メッセージ
-        await interaction.response.send_message("🎨 GraTeXで3Dグラフを生成中...")
-        
-        # 3Dグラフ生成
-        image_buffer = await gratex_bot.generate_3d_graph(latex, label_size)
-        
-        # Discord画像ファイルを作成
-        file = discord.File(image_buffer, filename=f"gratex_3d_graph.png")
-        
-        # 結果を送信
-        embed = discord.Embed(
-            title="📊 GraTeX 3Dグラフ",
-            description=f"**LaTeX式:** `{latex}`\n**ラベルサイズ:** {label_size}\n**モード:** 3D",
-            color=0x0099ff
-        )
-        embed.set_image(url="attachment://gratex_3d_graph.png")
-        embed.set_footer(text="Powered by GraTeX 3D")
-        
-        # フォローアップメッセージで画像を送信
-        message = await interaction.followup.send(file=file, embed=embed)
-        
-        # リアクションを追加（ラベルサイズ変更用）
-        reactions = ['1⃣', '2⃣', '3⃣', '4⃣', '6⃣', '8⃣', '🔄', '✅', '🚮']
-        for reaction in reactions:
-            await message.add_reaction(reaction)
-        
-        # リアクション処理を設定
-        await setup_reaction_handler_3d(interaction, message, latex, label_size)
-        
-    except Exception as e:
-        logger.error(f"3Dグラフ生成エラー: {e}")
-        await interaction.followup.send(f"❌ 3Dグラフの生成に失敗しました: {str(e)}")
-
 async def setup_reaction_handler_3d(interaction, message, latex_expression, current_label_size):
     """3D用のリアクション処理のセットアップ"""
     
@@ -1009,3 +994,23 @@ async def update_3d_graph(message, latex_expression, label_size):
         
     except Exception as e:
         logger.error(f"3Dグラフ更新エラー: {e}")
+
+# Keep-alive用サーバーを起動
+from server import keep_alive
+
+if __name__ == "__main__":
+    # サーバーを起動
+    keep_alive()
+    
+    # Botを起動
+    token = os.getenv('TOKEN')
+    if not token:
+        raise ValueError("Discord Bot Token が設定されていません")
+    
+    try:
+        bot.run(token)
+    except KeyboardInterrupt:
+        logger.info("Bot を停止しています...")
+    finally:
+        # クリーンアップ
+        asyncio.run(gratex_bot.close())
