@@ -85,6 +85,9 @@ class GraTeXBot:
                 await self.page.goto('https://teth-main.github.io/GraTeX/?wide=true&credit=true')
                 await self.page.wait_for_load_state('networkidle')
             
+            # 2Dモードを確実にする
+            await self.switch_to_2d_mode()
+            
             # GraTeX.calculator2Dが利用可能になるまで待機
             await self.page.wait_for_function(
                 "() => window.GraTeX && window.GraTeX.calculator2D",
@@ -206,6 +209,148 @@ class GraTeXBot:
             logger.error(f"グラフ生成エラー: {e}")
             raise
     
+    async def generate_3d_graph(self, latex_expression, label_size=4, zoom_level=0):
+        """LaTeX式から3Dグラフ画像を生成（GraTeX内部API使用）"""
+        try:
+            if not self.page:
+                await self.initialize_browser()
+            
+            # 現在のURLがGraTeXでない場合は移動
+            current_url = self.page.url
+            if 'teth-main.github.io/GraTeX' not in current_url:
+                await self.page.goto('https://teth-main.github.io/GraTeX/?wide=true&credit=true')
+                await self.page.wait_for_load_state('networkidle')
+            
+            # 3Dモードに切り替え
+            logger.info("3Dモードに切り替え中...")
+            three_d_label = await self.page.query_selector('label[for="version-3d"]')
+            if three_d_label:
+                await three_d_label.click()
+                await asyncio.sleep(2)  # 切り替え完了を待機
+            else:
+                raise Exception("3D切り替えボタンが見つかりません")
+            
+            # GraTeX.calculator3Dが利用可能になるまで待機
+            await self.page.wait_for_function(
+                "() => window.GraTeX && window.GraTeX.calculator3D",
+                timeout=15000
+            )
+            
+            # ラベルサイズを事前に設定
+            if label_size in [1, 2, 3, 4, 6, 8]:
+                try:
+                    # name="labelSize"のselectを探す
+                    label_select = await self.page.wait_for_selector('select[name="labelSize"]', timeout=5000)
+                    await label_select.select_option(str(label_size))
+                    logger.info(f"ラベルサイズを{label_size}に設定")
+                except Exception as e:
+                    logger.warning(f"ラベルサイズの設定に失敗、フォールバック: {e}")
+                    # フォールバック: form-controlクラスのselectを使用
+                    try:
+                        label_selects = await self.page.query_selector_all('select.form-control')
+                        if len(label_selects) >= 2:  # 2番目のselectがラベルサイズ
+                            await label_selects[1].select_option(str(label_size))
+                            logger.info(f"フォールバックでラベルサイズを{label_size}に設定")
+                    except Exception as e2:
+                        logger.warning(f"フォールバックも失敗: {e2}")
+            
+            # LaTeX式をGraTeX Calculator 3D APIで直接設定
+            logger.info(f"3D LaTeX式を設定: {latex_expression}")
+            await self.page.evaluate(f"""
+                () => {{
+                    if (window.GraTeX && window.GraTeX.calculator3D) {{
+                        window.GraTeX.calculator3D.setBlank();
+                        window.GraTeX.calculator3D.setExpression({{latex: `{latex_expression}`}});
+                        console.log("3D数式を設定しました:", `{latex_expression}`);
+                    }} else {{
+                        throw new Error("GraTeX.calculator3D が利用できません");
+                    }}
+                }}
+            """)
+            
+            # 3Dズームレベルを適用（必要に応じて将来実装）
+            if zoom_level != 0:
+                logger.info(f"3Dズームレベル {zoom_level} は現在未実装です")
+            
+            # 現在のズームレベルを更新
+            self.current_zoom_level = zoom_level
+            
+            # 少し待機してグラフが描画されるのを待つ
+            await asyncio.sleep(3)
+            
+            # Generateボタンをクリック
+            logger.info("3Dスクリーンショットボタンをクリック...")
+            await self.page.click('#screenshot-button')
+            
+            # 画像生成完了を待機 - id="preview"のimgタグが更新されるまで待つ
+            logger.info("3D画像生成を待機中...")
+            await self.page.wait_for_function(
+                """
+                () => {
+                    const previewImg = document.getElementById('preview');
+                    return previewImg && previewImg.src && previewImg.src.length > 100;
+                }
+                """,
+                timeout=20000
+            )
+            
+            # 生成された画像をid="preview"から取得
+            image_data = await self.page.evaluate('''
+                () => {
+                    const previewImg = document.getElementById('preview');
+                    if (previewImg && previewImg.src) {
+                        // imgのsrcがdata URLの場合はそのまま返す
+                        if (previewImg.src.startsWith('data:')) {
+                            return previewImg.src;
+                        }
+                        
+                        // imgのsrcがblobやURLの場合は、canvasに描画してdata URLを取得
+                        const canvas = document.createElement('canvas');
+                        const ctx = canvas.getContext('2d');
+                        
+                        canvas.width = previewImg.naturalWidth || previewImg.width;
+                        canvas.height = previewImg.naturalHeight || previewImg.height;
+                        
+                        ctx.drawImage(previewImg, 0, 0);
+                        return canvas.toDataURL('image/png');
+                    }
+                    
+                    return null;
+                }
+            ''')
+            
+            if not image_data:
+                # フォールバック: キャンバスから直接取得を試行
+                logger.warning("3D preview imgから画像を取得できませんでした。キャンバスから取得を試行...")
+                image_data = await self.page.evaluate('''
+                    () => {
+                        const allCanvas = document.querySelectorAll('canvas');
+                        for (let canvas of allCanvas) {
+                            if (canvas.width > 0 && canvas.height > 0) {
+                                try {
+                                    return canvas.toDataURL('image/png');
+                                } catch (e) {
+                                    continue;
+                                }
+                            }
+                        }
+                        return null;
+                    }
+                ''')
+            
+            if not image_data:
+                raise Exception("3D画像の生成に失敗しました - preview imgもキャンバスも見つかりません")
+            
+            logger.info("✅ 3D画像データの取得に成功!")
+            
+            # base64データを画像に変換
+            image_bytes = base64.b64decode(image_data.split(',')[1])
+            return io.BytesIO(image_bytes)
+            
+        except Exception as e:
+            logger.error(f"3Dグラフ生成エラー: {e}")
+            raise
+
     async def close(self):
         """リソースをクリーンアップ"""
         try:
@@ -302,6 +447,27 @@ class GraTeXBot:
             
         except Exception as e:
             logger.error(f"ズームレベル適用エラー: {e}")
+            return False
+
+    async def switch_to_2d_mode(self):
+        """2Dモードに切り替え"""
+        try:
+            if not self.page:
+                await self.initialize_browser()
+            
+            logger.info("2Dモードに切り替え中...")
+            two_d_label = await self.page.query_selector('label[for="version-2d"]')
+            if two_d_label:
+                await two_d_label.click()
+                await asyncio.sleep(2)  # 切り替え完了を待機
+                logger.info("✅ 2Dモードに切り替え完了")
+                return True
+            else:
+                logger.warning("2D切り替えボタンが見つかりません")
+                return False
+                
+        except Exception as e:
+            logger.error(f"2Dモード切り替えエラー: {e}")
             return False
 
 # グローバルインスタンス
@@ -712,3 +878,134 @@ if __name__ == "__main__":
     finally:
         # クリーンアップ
         asyncio.run(gratex_bot.close())
+
+@bot.tree.command(name="gratex3d", description="LaTeX式から3Dグラフを生成します")
+async def gratex3d_slash(
+    interaction: discord.Interaction, 
+    latex: str, 
+    label_size: int = 4
+):
+    """
+    スラッシュコマンド: LaTeX式から3Dグラフを生成
+    
+    Parameters:
+    - latex: LaTeX式またはDesmos記法の3D数式
+    - label_size: ラベルサイズ（1, 2, 3, 4, 6, 8）
+    """
+    
+    # パラメータ検証
+    if label_size not in [1, 2, 3, 4, 6, 8]:
+        await interaction.response.send_message("❌ ラベルサイズは 1, 2, 3, 4, 6, 8 のいずれかを指定してください", ephemeral=True)
+        return
+    
+    if not latex.strip():
+        await interaction.response.send_message("❌ LaTeX式を入力してください", ephemeral=True)
+        return
+    
+    try:
+        # 処理中メッセージ
+        await interaction.response.send_message("🎨 GraTeXで3Dグラフを生成中...")
+        
+        # 3Dグラフ生成
+        image_buffer = await gratex_bot.generate_3d_graph(latex, label_size)
+        
+        # Discord画像ファイルを作成
+        file = discord.File(image_buffer, filename=f"gratex_3d_graph.png")
+        
+        # 結果を送信
+        embed = discord.Embed(
+            title="📊 GraTeX 3Dグラフ",
+            description=f"**LaTeX式:** `{latex}`\n**ラベルサイズ:** {label_size}\n**モード:** 3D",
+            color=0x0099ff
+        )
+        embed.set_image(url="attachment://gratex_3d_graph.png")
+        embed.set_footer(text="Powered by GraTeX 3D")
+        
+        # フォローアップメッセージで画像を送信
+        message = await interaction.followup.send(file=file, embed=embed)
+        
+        # リアクションを追加（ラベルサイズ変更用）
+        reactions = ['1⃣', '2⃣', '3⃣', '4⃣', '6⃣', '8⃣', '🔄', '✅', '🚮']
+        for reaction in reactions:
+            await message.add_reaction(reaction)
+        
+        # リアクション処理を設定
+        await setup_reaction_handler_3d(interaction, message, latex, label_size)
+        
+    except Exception as e:
+        logger.error(f"3Dグラフ生成エラー: {e}")
+        await interaction.followup.send(f"❌ 3Dグラフの生成に失敗しました: {str(e)}")
+
+async def setup_reaction_handler_3d(interaction, message, latex_expression, current_label_size):
+    """3D用のリアクション処理のセットアップ"""
+    
+    def check(reaction, user):
+        return (
+            user == interaction.user and 
+            reaction.message.id == message.id and
+            str(reaction.emoji) in ['1⃣', '2⃣', '3⃣', '4⃣', '6⃣', '8⃣', '🔄', '✅', '🚮']
+        )
+    
+    timeout_duration = 300  # 5分
+    
+    while True:
+        try:
+            reaction, user = await bot.wait_for('reaction_add', timeout=timeout_duration, check=check)
+            emoji = str(reaction.emoji)
+            
+            if emoji == '🚮':
+                # メッセージ削除
+                await message.delete()
+                break
+                
+            elif emoji == '✅':
+                # 完了
+                await message.clear_reactions()
+                break
+                
+            elif emoji in ['1⃣', '2⃣', '3⃣', '4⃣', '6⃣', '8⃣']:
+                # ラベルサイズ変更
+                size_map = {'1⃣': 1, '2⃣': 2, '3⃣': 3, '4⃣': 4, '6⃣': 6, '8⃣': 8}
+                new_label_size = size_map[emoji]
+                
+                if new_label_size != current_label_size:
+                    await update_3d_graph(message, latex_expression, new_label_size)
+                    current_label_size = new_label_size
+            
+            elif emoji == '🔄':
+                # 3Dグラフを再生成（視点をリセット）
+                await update_3d_graph(message, latex_expression, current_label_size)
+            
+            # リアクションを削除
+            await reaction.remove(user)
+            
+        except asyncio.TimeoutError:
+            await message.clear_reactions()
+            break
+        except Exception as e:
+            logger.error(f"3Dリアクション処理エラー: {e}")
+            break
+
+async def update_3d_graph(message, latex_expression, label_size):
+    """3D用: グラフを更新"""
+    try:
+        # 新しい3Dグラフを生成
+        image_buffer = await gratex_bot.generate_3d_graph(latex_expression, label_size)
+        
+        # 新しいファイルを作成
+        file = discord.File(image_buffer, filename=f"gratex_3d_graph_updated.png")
+        
+        # Embedを更新
+        embed = discord.Embed(
+            title="📊 GraTeX 3Dグラフ (更新済み)",
+            description=f"**LaTeX式:** `{latex_expression}`\n**ラベルサイズ:** {label_size}\n**モード:** 3D",
+            color=0x0099ff
+        )
+        embed.set_image(url="attachment://gratex_3d_graph_updated.png")
+        embed.set_footer(text="Powered by GraTeX 3D")
+        
+        # メッセージを編集
+        await message.edit(attachments=[file], embed=embed)
+        
+    except Exception as e:
+        logger.error(f"3Dグラフ更新エラー: {e}")

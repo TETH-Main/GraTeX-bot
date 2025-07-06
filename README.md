@@ -1,8 +1,55 @@
 # GraTeX-bot
 
-LaTeX数式を**スラッシュコマンド**で受け取り、**GraTeX内部API**を直接使用して高品質なグラフ画像を生成し、Discordに送信するBotです。
+LaTeX数式を**スラッシュコマンド**で受け取り、**GraTeX内部API**を直接使用して高品質な**2D/3Dグラフ画像**を生成し、Discordに送信するBotです。
 
-## 🚀 特徴| リアクション | 機能 |
+## 🚀 特徴
+
+- **2D/3D対応**: 2Dグラフと3Dグラフの両方に対応
+- **ス### 🔄 ワークフロー
+
+#### 2Dグラフ
+1. **スラッシュコマンド**: `/gratex` でパラメータを指定
+2. **2Dモード確認**: `GraTeX.calculator2D`モードに切り替え
+3. **数式設定**: `GraTeX.calculator2D.setExpression({latex: "式"})`で直接数式を設定
+4. **ズーム適用**: `setMathBounds()`でビューポートを設定
+5. **画像生成**: スクリーンショットボタンをクリックして画像生成
+6. **画像取得**: `#preview` imgタグからbase64データを直接取得
+7. **結果送信**: Discord チャンネルに高品質画像を送信
+
+#### 3Dグラフ
+1. **スラッシュコマンド**: `/gratex3d` でパラメータを指定
+2. **3Dモード切り替え**: `label[for="version-3d"]`をクリックして3Dモードに切り替え
+3. **数式設定**: `GraTeX.calculator3D.setExpression({latex: "式"})`で直接3D数式を設定
+4. **画像生成**: スクリーンショットボタンをクリックして3D画像生成
+5. **画像取得**: `#preview` imgタグからbase64データを直接取得
+6. **結果送信**: Discord チャンネルに高品質3D画像を送信
+
+### インタラクティブ操作
+
+生成された画像にリアクションして操作できます：
+
+#### 2Dグラフのリアクション
+| リアクション | 機能 |
+|-------------|------|
+| 1⃣ 2⃣ 3⃣ 4⃣ 6⃣ 8⃣ | ラベルサイズ変更 |
+| 🔍 | 拡大（ズームイン）- ズームレベル+1 |
+| 🔭 | 縮小（ズームアウト）- ズームレベル-1 |
+| ✅ | 操作完了 |
+| 🚮 | メッセージ削除 |
+
+#### 3Dグラフのリアクション
+| リアクション | 機能 |
+|-------------|------|
+| 1⃣ 2⃣ 3⃣ 4⃣ 6⃣ 8⃣ | ラベルサイズ変更 |
+| 🔄 | 3Dグラフ再生成（視点リセット） |
+| ✅ | 操作完了 |
+| 🚮 | メッセージ削除 |scord UI体験
+- **GraTeX内部API直接使用**: Desmosを経由せず、`GraTeX.calculator2D/3D.setExpression()`で直接数式入力
+- **インタラクティブ機能**: リアクションによるリアルタイムズーム・ラベルサイズ変更
+- **ズームレベル管理**: 2Dグラフで-3～+3のズームレベルによる精密な表示制御
+- **軽量設計**: Playwright + bottle による最適化されたライブラリ構成
+- **Railway対応**: Railway.appでの簡単デプロイメント
+- **高性能**: `#preview`要素からのbase64画像の効率的な取得・変換| リアクション | 機能 |
 |-------------|------|
 | 1⃣ 2⃣ 3⃣ 4⃣ 6⃣ 8⃣ | ラベルサイズ変更 |
 | 🔍 | 拡大（ズームイン）- ズームレベル+1 |
@@ -90,18 +137,25 @@ GraTeX-bot/
 
 ### スラッシュコマンド
 
+#### 2Dグラフ
 ```
 /gratex latex:[数式] label_size:[サイズ] zoom_level:[レベル]
+```
+
+#### 3Dグラフ
+```
+/gratex3d latex:[数式] label_size:[サイズ]
 ```
 
 ### パラメータ
 
 - **latex** (必須): LaTeX記法またはDesmos記法の数式
 - **label_size** (オプション): `1`, `2`, `3`, `4`, `6`, `8` のいずれか（デフォルト: 4）
-- **zoom_level** (オプション): `-3` ～ `3` のズームレベル（デフォルト: 0）
+- **zoom_level** (2Dのみ): `-3` ～ `3` のズームレベル（デフォルト: 0）
 
 ### 📋 コマンド例
 
+#### 2Dグラフ
 ```bash
 # 基本的な数式（円）
 /gratex latex:x^2 + y^2 = 1
@@ -114,6 +168,21 @@ GraTeX-bot/
 
 # フル指定
 /gratex latex:y = x^2 label_size:8 zoom_level:-1
+```
+
+#### 3Dグラフ
+```bash
+# 基本的な3D曲面（パラボロイド）
+/gratex3d latex:z = x^2 + y^2
+
+# 球
+/gratex3d latex:x^2 + y^2 + z^2 = 25
+
+# 波面 + ラベルサイズ指定
+/gratex3d latex:z = sin(x) * cos(y) label_size:6
+
+# 楕円体
+/gratex3d latex:x^2/4 + y^2/9 + z^2/16 = 1
 ```
 
 ### ズームレベル仕様
@@ -151,16 +220,17 @@ GraTeX-bot/
 
 ### 💡 対応数式例
 
+#### 2Dグラフ
 ```bash
 # 基本関数
-!gratex "y = x^2"
-!gratex "y = sin(x)"
-!gratex "y = log(x)"
+/gratex latex:y = x^2
+/gratex latex:y = sin(x)
+/gratex latex:y = log(x)
 
 # 幾何図形
-!gratex "x^2 + y^2 = 25"          # 円
-!gratex "(x/4)^2 + (y/3)^2 = 1"   # 楕円
-!gratex "y^2 = 4x"                # 放物線
+/gratex latex:x^2 + y^2 = 25          # 円
+/gratex latex:(x/4)^2 + (y/3)^2 = 1   # 楕円
+/gratex latex:y^2 = 4x                # 放物線
 
 # 極座標
 /gratex latex:r = 2cos(θ)             # カージオイド
@@ -177,6 +247,32 @@ GraTeX-bot/
 # LaTeX記法
 /gratex latex:\\sin(x) + \\cos(y) = 0
 /gratex latex:\\frac{x^2}{9} + \\frac{y^2}{4} = 1
+```
+
+#### 3Dグラフ
+```bash
+# 基本曲面
+/gratex3d latex:z = x^2 + y^2         # パラボロイド
+/gratex3d latex:z = x^2 - y^2         # 双曲パラボロイド（馬の鞍）
+/gratex3d latex:z = sqrt(x^2 + y^2)   # 円錐
+
+# 幾何図形（3D）
+/gratex3d latex:x^2 + y^2 + z^2 = 25    # 球
+/gratex3d latex:x^2/4 + y^2/9 + z^2/16 = 1  # 楕円体
+/gratex3d latex:x^2 + y^2 - z^2 = 1     # 双曲面
+
+# 波面・振動
+/gratex3d latex:z = sin(x) * cos(y)     # 波面
+/gratex3d latex:z = sin(sqrt(x^2 + y^2)) # 波紋
+/gratex3d latex:z = sin(x) + cos(y)     # 合成波
+
+# 複雑な3D曲面
+/gratex3d latex:z = x^3 - 3*x*y^2      # 3次曲面
+/gratex3d latex:z = (x^2 - y^2)/(x^2 + y^2 + 1)  # 有理曲面
+
+# LaTeX記法（3D）
+/gratex3d latex:z = \\sin(x) \\cdot \\cos(y)
+/gratex3d latex:x^2 + y^2 + z^2 = r^2
 ```
 
 ## 🚀 Railway.app デプロイ手順
