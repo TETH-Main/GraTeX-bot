@@ -88,20 +88,28 @@ After generating a graph, you can use reactions to:
 ### Common Issues on Railway
 
 1. **ChromeDriver not found error:**
-   - Railway automatically installs Chromium and ChromeDriver via nixpacks.toml
+   - **Using Dockerfile**: Chromium and ChromeDriver are installed via APT packages
+   - **Using Nixpacks**: Railway installs via nixpacks.toml and Aptfile
    - Check the Railway logs for WebDriver initialization messages
 
 2. **WebDriver timeout errors:**
    - The bot retries WebDriver creation with multiple fallback methods
    - Check if the GraTeX website is accessible
+   - Verify Chrome binary and ChromeDriver paths in logs
 
 3. **Memory issues:**
    - Railway free tier has memory limits
    - The bot is configured with minimal Chrome arguments to reduce memory usage
+   - Consider upgrading to a paid plan for better performance
+
+4. **Docker build errors:**
+   - **ChromeDriver download issues**: Fixed by using APT packages instead of manual download
+   - **Python environment issues**: Dockerfile ensures consistent Python 3.11 environment
 
 ### Deployment Notes
 
-- Uses nixpacks.toml for proper Chrome/ChromeDriver installation
+- **Dockerfile approach**: Uses Debian APT packages for reliability
+- **Nixpacks approach**: Uses nixpacks.toml for proper Chrome/ChromeDriver installation
 - Includes multiple fallback mechanisms for WebDriver creation
 - Automatically detects Chrome binary location in Railway environment
 - Includes comprehensive error handling and logging

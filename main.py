@@ -35,16 +35,16 @@ def create_driver():
     
     # Railway/Docker環境でのChrome設定
     chrome_paths = [
-        '/usr/bin/google-chrome',        # Docker/Google Chrome
+        '/usr/bin/chromium',             # Docker/Chromium
+        '/usr/bin/google-chrome',        # Google Chrome
         '/nix/store/*/bin/chromium',     # Nixpacks
-        '/usr/bin/chromium-browser',     # Aptfile
-        '/usr/bin/chromium',             # Alternative
+        '/usr/bin/chromium-browser',     # Alternative
     ]
     
     chromedriver_paths = [
-        '/usr/local/bin/chromedriver',   # Docker
+        '/usr/bin/chromedriver',         # Docker/System
+        '/usr/local/bin/chromedriver',   # Custom install
         '/nix/store/*/bin/chromedriver', # Nixpacks
-        '/usr/bin/chromedriver',         # Aptfile/System
     ]
     
     # Chrome バイナリパスを探す
