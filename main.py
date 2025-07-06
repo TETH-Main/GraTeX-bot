@@ -21,6 +21,8 @@ except ImportError:
 def create_driver():
     """Chrome WebDriverを作成する関数"""
     options = Options()
+    
+    # 基本設定
     options.add_argument('--no-sandbox')
     options.add_argument('--disable-dev-shm-usage')
     options.add_argument('--disable-gpu')
@@ -30,6 +32,23 @@ def create_driver():
     options.add_argument('--window-size=1920,1080')
     options.add_argument('--disable-web-security')
     options.add_argument('--allow-running-insecure-content')
+    
+    # ユーザーデータディレクトリの競合を回避
+    import tempfile
+    import uuid
+    temp_dir = tempfile.gettempdir()
+    unique_user_data_dir = f"{temp_dir}/chrome_user_data_{uuid.uuid4()}"
+    options.add_argument(f'--user-data-dir={unique_user_data_dir}')
+    print(f"Using unique user data directory: {unique_user_data_dir}")
+    
+    # 追加の安定性設定
+    options.add_argument('--disable-background-timer-throttling')
+    options.add_argument('--disable-backgrounding-occluded-windows')
+    options.add_argument('--disable-renderer-backgrounding')
+    options.add_argument('--disable-features=TranslateUI')
+    options.add_argument('--disable-ipc-flooding-protection')
+    options.add_argument('--single-process')
+    
     options.add_argument('--user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
     options.headless = True
     
@@ -115,11 +134,29 @@ def initialize_driver():
     """WebDriverを初期化する関数"""
     global driver
     if driver is None:
+        print("Creating new WebDriver instance...")
         driver = create_driver()
+        print("Loading GraTeX website...")
         driver.get('https://teth-main.github.io/GraTeX/?wide=true&credit=true')
-        WebDriverWait(driver, 20).until(
+        print("Waiting for page to load...")
+        WebDriverWait(driver, 30).until(
             EC.presence_of_element_located((By.CLASS_NAME, "dcg-tap-container")))
         print("WebDriver initialized successfully")
+    else:
+        print("WebDriver already initialized")
+
+
+def cleanup_driver():
+    """WebDriverをクリーンアップする関数"""
+    global driver
+    if driver:
+        try:
+            driver.quit()
+            print("WebDriver closed successfully")
+        except Exception as e:
+            print(f"Error closing WebDriver: {e}")
+        finally:
+            driver = None
 
 
 async def generate_img(latex, labelSize='4', zoomLevel=0):
@@ -133,48 +170,80 @@ async def generate_img(latex, labelSize='4', zoomLevel=0):
     # ドライバーが初期化されていない場合は初期化
     if driver is None:
         print("Driver not initialized, initializing...")
-        initialize_driver()
+        try:
+            initialize_driver()
+        except Exception as e:
+            print(f"Failed to initialize driver: {e}")
+            return "error"
 
     try:
+        print("Checking current page...")
+        current_url = driver.current_url
+        print(f"Current URL: {current_url}")
+        
+        # ページが正しく読み込まれているかチェック
+        if "GraTeX" not in current_url:
+            print("Reloading GraTeX page...")
+            driver.get('https://teth-main.github.io/GraTeX/?wide=true&credit=true')
+            WebDriverWait(driver, 30).until(
+                EC.presence_of_element_located((By.CLASS_NAME, "dcg-tap-container")))
+        
         print("Checking zoom restore button...")
-        if (driver.find_element(By.CLASS_NAME,
-                                "dcg-action-zoomrestore").is_displayed()):
-            driver.find_element(By.CLASS_NAME, "dcg-action-zoomrestore").click()
+        zoom_restore = driver.find_elements(By.CLASS_NAME, "dcg-action-zoomrestore")
+        if zoom_restore and zoom_restore[0].is_displayed():
+            zoom_restore[0].click()
             print("Zoom restore clicked")
             
         print(f"Setting zoom level to {zoomLevel}...")
         if (zoomLevel > 0):
             for i in range(zoomLevel):
-                driver.find_element(By.CLASS_NAME, "dcg-action-zoomin").click()
-                print(f"Zoom in {i+1}/{zoomLevel}")
+                zoom_in_buttons = driver.find_elements(By.CLASS_NAME, "dcg-action-zoomin")
+                if zoom_in_buttons:
+                    zoom_in_buttons[0].click()
+                    print(f"Zoom in {i+1}/{zoomLevel}")
+                    await asyncio.sleep(0.5)  # 少し待機
         if (zoomLevel < 0):
             for i in range(-zoomLevel):
-                driver.find_element(By.CLASS_NAME, "dcg-action-zoomout").click()
-                print(f"Zoom out {i+1}/{-zoomLevel}")
+                zoom_out_buttons = driver.find_elements(By.CLASS_NAME, "dcg-action-zoomout")
+                if zoom_out_buttons:
+                    zoom_out_buttons[0].click()
+                    print(f"Zoom out {i+1}/{-zoomLevel}")
+                    await asyncio.sleep(0.5)  # 少し待機
 
         print(f"Setting label size to {labelSize}...")
-        Select(
-            driver.find_element(By.NAME, "labelSize").find_element(
-                By.NAME, "labelSize")).select_by_value(labelSize)
-        print("Label size set")
+        try:
+            label_selects = driver.find_elements(By.NAME, "labelSize")
+            if label_selects:
+                Select(label_selects[0]).select_by_value(labelSize)
+                print("Label size set")
+            else:
+                print("Label size selector not found")
+        except Exception as e:
+            print(f"Error setting label size: {e}")
         
         print("Removing old expression...")
         driver.execute_script("calculator.removeExpression({id:'3'});")
         
         print(f"Setting new expression: {latex}")
+        # JavaScriptエスケープを改善
+        escaped_latex = latex.replace('\\', '\\\\').replace('`', '\\`')
         driver.execute_script(
-            "calculator.setExpression({id:'1', latex: String.raw`" + latex +
-            "`, color:'black'});")
+            f"calculator.setExpression({{id:'1', latex: String.raw`{escaped_latex}`, color:'black'}});")
         
         print("Waiting 5 seconds...")
         await asyncio.sleep(5)
         
         print("Clicking screenshot button...")
-        driver.find_element(By.ID, "screenshot-button").click()
+        screenshot_buttons = driver.find_elements(By.ID, "screenshot-button")
+        if screenshot_buttons:
+            screenshot_buttons[0].click()
+        else:
+            print("Screenshot button not found")
+            return "error"
 
         try:
             print("Waiting for generation container...")
-            WebDriverWait(driver, 20).until(
+            WebDriverWait(driver, 30).until(
                 EC.visibility_of_element_located((By.ID, "generate-container")))
             print("Generation container found")
         except TimeoutException:
@@ -186,21 +255,36 @@ async def generate_img(latex, labelSize='4', zoomLevel=0):
         driver.execute_script("calculator.removeExpression({id:'1'});")
 
         print("Getting image data...")
-        img_data = driver.find_element(By.ID, "preview").get_attribute("src")
-        print(f"Image data length: {len(img_data) if img_data else 'None'}")
-        
-        if img_data and len(img_data) > 21:
-            result = img_data[21:]
-            print(f"Returning image data, length: {len(result)}")
-            return result
+        preview_elements = driver.find_elements(By.ID, "preview")
+        if preview_elements:
+            img_data = preview_elements[0].get_attribute("src")
+            print(f"Image data length: {len(img_data) if img_data else 'None'}")
+            
+            if img_data and len(img_data) > 21:
+                result = img_data[22:]  # "data:image/png;base64," を除去
+                print(f"Returning image data, length: {len(result)}")
+                return result
+            else:
+                print("Invalid image data")
+                return "error"
         else:
-            print("Invalid image data")
+            print("Preview element not found")
             return "error"
             
     except Exception as e:
         print(f"Error in generate_img: {e}")
         import traceback
         traceback.print_exc()
+        
+        # エラー時にドライバーを再初期化
+        print("Attempting to reinitialize driver due to error...")
+        cleanup_driver()
+        try:
+            initialize_driver()
+            print("Driver reinitialized successfully")
+        except Exception as reinit_error:
+            print(f"Failed to reinitialize driver: {reinit_error}")
+        
         return "error"
 
 
@@ -477,6 +561,8 @@ if __name__ == "__main__":
     try:
         print("Starting bot...")
         bot.run(token)
+    except KeyboardInterrupt:
+        print("Bot stopped by user")
     except Exception as e:
         print(f"Bot error: {e}")
         import traceback
@@ -484,9 +570,4 @@ if __name__ == "__main__":
     finally:
         # クリーンアップ
         print("Cleaning up...")
-        if driver:
-            try:
-                driver.quit()
-                print("WebDriver closed")
-            except:
-                pass
+        cleanup_driver()
