@@ -165,16 +165,26 @@ intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix='!', intents=intents)
 
+# スラッシュコマンド用のTree
+tree = bot.tree
 
-async def waitReaction(ctx, message, arg, labelSize, zoomLevel):
 
-  def check(reaction, user):
-    return user == ctx.author and str(reaction.emoji) in [
+async def waitReaction(ctx_or_interaction, message, arg, labelSize, zoomLevel):
+  # ctx_or_interactionがInteractionかContextかを判定
+  if hasattr(ctx_or_interaction, 'user'):
+    # Interaction
+    user = ctx_or_interaction.user
+  else:
+    # Context
+    user = ctx_or_interaction.author
+
+  def check(reaction, reaction_user):
+    return reaction_user == user and str(reaction.emoji) in [
       '1⃣', '2⃣', '3⃣', '4⃣', '6⃣', '8⃣', '🔎', '🔭', '✅', '🚮'
     ]
 
   try:
-    reaction, user = await bot.wait_for('reaction_add',
+    reaction, reaction_user = await bot.wait_for('reaction_add',
                                         timeout=20.0,
                                         check=check)
   except asyncio.TimeoutError:
@@ -197,14 +207,19 @@ async def waitReaction(ctx, message, arg, labelSize, zoomLevel):
     if (str(reaction.emoji) in ['1⃣', '2⃣', '3⃣', '4⃣', '6⃣', '8⃣']):
       labelSize = str(reaction.emoji)[0]
 
-    await reaction.remove(user)
-    async with ctx.typing():
+    await reaction.remove(reaction_user)
+    
+    # メッセージ更新処理
+    try:
       img_data = await generate_img(arg, labelSize, zoomLevel)
       await message.edit(attachments=[
         discord.File(io.BytesIO(base64.b64decode(img_data)),
                      f'GraTeX zoom {zoomLevel}.png')
       ])
-    await waitReaction(ctx, message, arg, labelSize, zoomLevel)
+    except Exception as e:
+      print(f"Error updating image: {e}")
+    
+    await waitReaction(ctx_or_interaction, message, arg, labelSize, zoomLevel)
 
 
 @bot.event
@@ -216,54 +231,142 @@ async def on_ready():
         print('WebDriver initialized on bot startup')
     except Exception as e:
         print(f'Error initializing WebDriver: {e}')
+    
+    # スラッシュコマンドを同期
+    try:
+        synced = await tree.sync()
+        print(f'Synced {len(synced)} slash commands')
+    except Exception as e:
+        print(f'Failed to sync slash commands: {e}')
 
 
-@bot.command()
-async def gratex(ctx, arg, labelSize='4', zoomLevel=0):
-  if (arg == "help"):
+# ヘルプ用のEmbed作成関数
+def create_help_embed():
     embed = discord.Embed(
-      title="🧮 GraTeX Bot - Help",
-      description="Generate mathematical graphs from LaTeX formulas with interactive controls",
-      color=0x00ff00
+        title="🧮 GraTeX Bot - Help",
+        description="Generate mathematical graphs from LaTeX formulas with interactive controls",
+        color=0x00ff00
     )
     
     embed.add_field(
-      name="📖 Basic Usage",
-      value='`!gratex "latex_formula"`\nFormula must be enclosed in quotes\n\n**Example:**\n`!gratex "\\cos x\\le\\cos y"`',
-      inline=False
+        name="📖 Basic Usage",
+        value='`/gratex formula:"latex_formula"`\nor\n`!gratex "latex_formula"`\n\n**Example:**\n`/gratex formula:"\\cos x\\le\\cos y"`',
+        inline=False
     )
     
     embed.add_field(
-      name="🎛️ Interactive Controls",
-      value="2⃣3⃣4⃣6⃣ : Change label size\n🔎 : Zoom in\n🔭 : Zoom out\n✅ : Complete editing\n🚮 : Delete message",
-      inline=False
+        name="🎛️ Interactive Controls",
+        value="2⃣3⃣4⃣6⃣ : Change label size\n🔎 : Zoom in\n🔭 : Zoom out\n✅ : Complete editing\n🚮 : Delete message",
+        inline=False
     )
     
     embed.add_field(
-      name="⚙️ Advanced Usage",
-      value='`!gratex "latex" labelSize zoomLevel`\n\n**Parameters:**\n• labelSize: 1, 2, 3, 4, 6, 8\n• zoomLevel: integer value',
-      inline=False
+        name="⚙️ Advanced Usage",
+        value='`/gratex formula:"latex" label_size:4 zoom_level:0`\n\n**Parameters:**\n• label_size: 1, 2, 3, 4, 6, 8\n• zoom_level: integer value',
+        inline=False
     )
     
     embed.add_field(
-      name="⏱️ Note",
-      value="If no response for 20 seconds, editing automatically completes",
-      inline=False
+        name="⏱️ Note",
+        value="If no response for 20 seconds, editing automatically completes",
+        inline=False
     )
     
     embed.set_footer(text="Powered by GraTeX | Made with ❤️")
     
+    return embed
+
+
+# スラッシュコマンド定義
+@tree.command(name="gratex", description="Generate mathematical graphs from LaTeX formulas")
+async def gratex_slash(
+    interaction: discord.Interaction,
+    formula: str,
+    label_size: int = 4,
+    zoom_level: int = 0
+):
+    # パラメータ検証
+    if label_size not in [1, 2, 3, 4, 6, 8]:
+        await interaction.response.send_message(
+            '❌ **Invalid label size!**\nLabel size must be one of: 1, 2, 3, 4, 6, 8\n\nUse `/gratex help` for more information.',
+            ephemeral=True
+        )
+        return
+    
+    if not isinstance(zoom_level, int):
+        await interaction.response.send_message(
+            '❌ **Invalid zoom level!**\nZoom level must be an integer\n\nUse `/gratex help` for more information.',
+            ephemeral=True
+        )
+        return
+
+    # "help"チェック
+    if formula.lower() == "help":
+        embed = create_help_embed()
+        await interaction.response.send_message(embed=embed)
+        return
+    
+    # 処理中メッセージ
+    await interaction.response.defer()
+    
+    try:
+        # 画像生成
+        img_data = await generate_img(
+            formula.translate(str.maketrans('', '', '`')), 
+            str(label_size), 
+            zoom_level
+        )
+        
+        if img_data == "error":
+            await interaction.followup.send(
+                '❌ **The graph could not be generated.**\nPlease enter a simpler formula and try again.'
+            )
+            return
+
+        # 画像送信
+        reply = await interaction.followup.send(
+            file=discord.File(
+                io.BytesIO(base64.b64decode(img_data)), 
+                'GraTeX.png'
+            )
+        )
+        
+        # リアクション追加
+        await reply.add_reaction('2⃣')
+        await reply.add_reaction('3⃣')
+        await reply.add_reaction('4⃣')
+        await reply.add_reaction('6⃣')
+        await reply.add_reaction('🔎')
+        await reply.add_reaction('🔭')
+        await reply.add_reaction('✅')
+        await reply.add_reaction('🚮')
+        
+        # リアクション待機
+        await waitReaction(interaction, reply, formula, str(label_size), zoom_level)
+        
+    except Exception as e:
+        print(f"Error in slash command: {e}")
+        await interaction.followup.send(
+            '❌ **An error occurred while generating the graph.**\nPlease try again later.'
+        )
+
+
+# 従来のプレフィックスコマンド（後方互換性のため）
+@bot.command()
+async def gratex(ctx, arg, labelSize='4', zoomLevel=0):
+  if (arg == "help"):
+    embed = create_help_embed()
     await ctx.send(embed=embed)
     return
 
   if (not labelSize in ['1', '2', '3', '4', '6', '8']):
     await ctx.send(
-      'Wrong command!\n\nPlease type `!gratex help` to confirm the command.')
+      '❌ **Wrong command!**\n\nPlease type `!gratex help` or `/gratex help` to confirm the command.')
     return
 
   if (not isinstance(zoomLevel, int)):
     await ctx.send(
-      'Wrong command!\n\nPlease type `!gratex help` to confirm the command.')
+      '❌ **Wrong command!**\n\nPlease type `!gratex help` or `/gratex help` to confirm the command.')
     return
 
   async with ctx.typing():
@@ -272,7 +375,7 @@ async def gratex(ctx, arg, labelSize='4', zoomLevel=0):
                                   zoomLevel)  #removes extra msg bits
     if (img_data == "error"):
       await ctx.send(
-        '**The graph could not be generated. \nPlease enter a simpler formula and try again.**'
+        '❌ **The graph could not be generated.**\nPlease enter a simpler formula and try again.'
       )
       return
 
