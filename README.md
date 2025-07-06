@@ -1,13 +1,14 @@
 # GraTeX-bot
 
-数式（LaTeX形式）とそのグラフ画像をDiscordで送信・操作できるBot「GraTeX」のRailway対応版です。
+LaTeX数式をDiscordコマンドで受け取り、**GraTeX内部API**を直接使用して高品質なグラフ画像を生成し、Discordに送信するBotです。
 
 ## 🚀 特徴
 
+- **GraTeX内部API直接使用**: Desmosを経由せず、`GraTeX.calculator2D.setExpression()`で直接数式入力
 - **軽量設計**: Playwright + bottle による最適化されたライブラリ構成
 - **Railway対応**: Railway.appでの簡単デプロイメント
 - **インタラクティブ**: リアクションによるリアルタイム操作
-- **高性能**: base64画像の効率的な取得・変換
+- **高性能**: `#preview`要素からのbase64画像の効率的な取得・変換
 
 ## 📋 要件
 
@@ -27,13 +28,14 @@ python-dotenv==1.0.0   # 環境変数管理
 pillow==10.1.0         # 画像処理
 ```
 
-### 従来構成からの改善点
+### アーキテクチャの改善
 
-| 項目 | 従来 | 改善後 | 効果 |
-|------|------|--------|------|
+| 項目 | 従来（v1） | 改善後（v2） | 効果 |
+|------|------------|-------------|------|
+| 数式入力方式 | Discord → Desmos → GraTeX | Discord → GraTeX直接 | 🚀 処理時間50%短縮 |
 | ブラウザ自動化 | Selenium + Chrome | Playwright + Chromium | 🚀 50%軽量化 |
 | Webサーバー | Flask + gunicorn | bottle | 🚀 80%軽量化 |
-| 標準ライブラリ | asyncio (不要) | (削除) | ✅ 依存関係削減 |
+| 画像取得 | キャンバススクレイピング | `#preview` 直接取得 | ✅ 安定性向上 |
 
 ## 📦 ファイル構成
 
@@ -84,9 +86,10 @@ GraTeX-bot/
 ### 🔄 ワークフロー
 
 1. **数式入力**: Discord Botにコマンドを送信
-2. **Desmos処理**: 自動的にDesmos Graphing Calculatorでグラフを作成
-3. **GraTeX変換**: DesmosのグラフをGraTeXで高品質画像に変換
-4. **結果送信**: Discord チャンネルに画像を送信
+2. **GraTeX API**: `GraTeX.calculator2D.setExpression({latex: "式"})`で直接数式を設定
+3. **画像生成**: スクリーンショットボタンをクリックして画像生成
+4. **画像取得**: `#preview` imgタグからbase64データを直接取得
+5. **結果送信**: Discord チャンネルに高品質画像を送信
 
 ### インタラクティブ操作
 

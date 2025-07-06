@@ -56,62 +56,115 @@ class GraTeXBot:
             logger.error(f"ブラウザの初期化に失敗: {e}")
             raise
     
-    async def generate_graph(self, latex_expression, label_size=4, zoom_level=0):
-        """LaTeX式からグラフ画像を生成"""
+    async def generate_graph(self, latex_expression, label_size=4):
+        """LaTeX式からグラフ画像を生成（GraTeX内部API使用）"""
         try:
             if not self.page:
                 await self.initialize_browser()
             
-            # Step 1: Desmosでグラフを作成してURLを取得
-            desmos_url = await self.create_desmos_graph(latex_expression)
-            logger.info(f"Desmos URL取得: {desmos_url}")
+            # 現在のURLがGraTeXでない場合は移動
+            current_url = self.page.url
+            if 'teth-main.github.io/GraTeX' not in current_url:
+                await self.page.goto('https://teth-main.github.io/GraTeX/?wide=true&credit=true')
+                await self.page.wait_for_load_state('networkidle')
             
-            # Step 2: GraTeXページに移動
-            await self.page.goto('https://teth-main.github.io/GraTeX/?wide=true&credit=true')
-            await self.page.wait_for_load_state('networkidle')
+            # GraTeX.calculator2Dが利用可能になるまで待機
+            await self.page.wait_for_function(
+                "() => window.GraTeX && window.GraTeX.calculator2D",
+                timeout=10000
+            )
             
-            # Step 3: DesmosのURLを入力
-            await self.page.fill('#desmos-hash', desmos_url)
-            
-            # Step 4: ラベルサイズを設定
+            # ラベルサイズを事前に設定
             if label_size in [1, 2, 2.5, 3, 4, 6, 8]:
-                label_selects = await self.page.query_selector_all('select.form-control')
-                if len(label_selects) >= 2:  # 2番目のselectがラベルサイズ
-                    await label_selects[1].select_option(str(label_size))
+                try:
+                    label_selects = await self.page.query_selector_all('select.form-control')
+                    if len(label_selects) >= 2:  # 2番目のselectがラベルサイズ
+                        await label_selects[1].select_option(str(label_size))
+                        logger.info(f"ラベルサイズを{label_size}に設定")
+                except Exception as e:
+                    logger.warning(f"ラベルサイズの設定に失敗: {e}")
             
-            # Step 5: 画像サイズを設定（必要に応じて）
-            # デフォルトは1920x1080で良い
+            # LaTeX式をGraTeX Calculator APIで直接設定
+            logger.info(f"LaTeX式を設定: {latex_expression}")
+            await self.page.evaluate(f"""
+                () => {{
+                    if (window.GraTeX && window.GraTeX.calculator2D) {{
+                        window.GraTeX.calculator2D.setBlank();
+                        window.GraTeX.calculator2D.setExpression({{latex: `{latex_expression}`}});
+                        console.log("数式を設定しました:", `{latex_expression}`);
+                    }} else {{
+                        throw new Error("GraTeX.calculator2D が利用できません");
+                    }}
+                }}
+            """)
             
-            # Step 6: Generateボタンをクリック
+            # 少し待機してグラフが描画されるのを待つ
+            await asyncio.sleep(2)
+            
+            # Generateボタンをクリック
+            logger.info("スクリーンショットボタンをクリック...")
             await self.page.click('#screenshot-button')
             
-            # Step 7: 画像生成完了を待機
-            await asyncio.sleep(5)  # 画像生成に時間がかかる場合があります
+            # 画像生成完了を待機 - id="preview"のimgタグが更新されるまで待つ
+            logger.info("画像生成を待機中...")
+            await self.page.wait_for_function(
+                """
+                () => {
+                    const previewImg = document.getElementById('preview');
+                    return previewImg && previewImg.src && previewImg.src.length > 100;
+                }
+                """,
+                timeout=15000
+            )
             
-            # Step 8: 生成された画像を取得
-            # GraTeXは生成後に画像をダウンロードリンクとして提供する可能性があります
-            # まず、キャンバスから直接取得を試行
+            # 生成された画像をid="preview"から取得
             image_data = await self.page.evaluate('''
                 () => {
-                    // GraTeXの結果キャンバスを探す
-                    const canvas = document.querySelector('canvas.dcg-graph-inner');
-                    if (canvas && canvas.width > 0 && canvas.height > 0) {
+                    const previewImg = document.getElementById('preview');
+                    if (previewImg && previewImg.src) {
+                        // imgのsrcがdata URLの場合はそのまま返す
+                        if (previewImg.src.startsWith('data:')) {
+                            return previewImg.src;
+                        }
+                        
+                        // imgのsrcがblobやURLの場合は、canvasに描画してdata URLを取得
+                        const canvas = document.createElement('canvas');
+                        const ctx = canvas.getContext('2d');
+                        
+                        canvas.width = previewImg.naturalWidth || previewImg.width;
+                        canvas.height = previewImg.naturalHeight || previewImg.height;
+                        
+                        ctx.drawImage(previewImg, 0, 0);
                         return canvas.toDataURL('image/png');
                     }
                     
-                    // 他のキャンバス要素も確認
-                    const allCanvas = document.querySelectorAll('canvas');
-                    for (let c of allCanvas) {
-                        if (c.width > 0 && c.height > 0) {
-                            return c.toDataURL('image/png');
-                        }
-                    }
                     return null;
                 }
             ''')
             
             if not image_data:
-                raise Exception("画像の生成に失敗しました - キャンバスが見つからないか空です")
+                # フォールバック: キャンバスから直接取得を試行
+                logger.warning("preview imgから画像を取得できませんでした。キャンバスから取得を試行...")
+                image_data = await self.page.evaluate('''
+                    () => {
+                        const allCanvas = document.querySelectorAll('canvas');
+                        for (let canvas of allCanvas) {
+                            if (canvas.width > 0 && canvas.height > 0) {
+                                try {
+                                    return canvas.toDataURL('image/png');
+                                } catch (e) {
+                                    continue;
+                                }
+                            }
+                        }
+                        return null;
+                    }
+                ''')
+            
+            if not image_data:
+                raise Exception("画像の生成に失敗しました - preview imgもキャンバスも見つかりません")
+            
+            logger.info("✅ 画像データの取得に成功!")
             
             # base64データを画像に変換
             image_bytes = base64.b64decode(image_data.split(',')[1])
@@ -120,91 +173,6 @@ class GraTeXBot:
         except Exception as e:
             logger.error(f"グラフ生成エラー: {e}")
             raise
-    
-    async def create_desmos_graph(self, latex_expression):
-        """Desmosでグラフを作成してURLまたはハッシュを取得"""
-        try:
-            # 新しいページを開いてDesmos電卓にアクセス
-            desmos_page = await self.browser.new_page()
-            await desmos_page.goto('https://www.desmos.com/calculator')
-            await desmos_page.wait_for_load_state('networkidle')
-            
-            # LaTeX式を入力
-            # Desmosの式入力エリアを探す
-            expression_input = await desmos_page.wait_for_selector('.dcg-mq-editable-field', timeout=10000)
-            
-            # 式を入力
-            await expression_input.click()
-            await expression_input.type(latex_expression)
-            
-            # Enterキーを押して式を確定
-            await expression_input.press('Enter')
-            
-            # 少し待機してグラフが描画されるのを待つ
-            await asyncio.sleep(3)
-            
-            # Shareボタンを探してクリック（ハッシュ生成のため）
-            try:
-                share_button = await desmos_page.wait_for_selector('[aria-label="Share Graph"]', timeout=5000)
-                await share_button.click()
-                await asyncio.sleep(2)
-                
-                # Share URLを取得
-                share_url_input = await desmos_page.wait_for_selector('input[readonly]', timeout=5000)
-                share_url = await share_url_input.get_attribute('value')
-                
-                if share_url and '#' in share_url:
-                    hash_value = share_url.split('#')[1]
-                    await desmos_page.close()
-                    return hash_value
-                    
-            except Exception as e:
-                logger.warning(f"Shareボタンが見つからないかクリックできませんでした: {e}")
-            
-            # Shareボタンが使えない場合の代替方法: URLから直接ハッシュを取得
-            current_url = desmos_page.url
-            await desmos_page.close()
-            
-            if '#' in current_url:
-                return current_url.split('#')[1]
-            else:
-                # ハッシュがない場合はDesmosのAPIを使用して簡易的なハッシュを作成
-                # LaTeX式をDesmos形式に変換
-                desmos_expression = self.latex_to_desmos(latex_expression)
-                return f"expression={desmos_expression}"
-                
-        except Exception as e:
-            logger.error(f"Desmosグラフ作成エラー: {e}")
-            # フォールバック: LaTeX式をDesmos形式に変換
-            desmos_expression = self.latex_to_desmos(latex_expression)
-            return f"expression={desmos_expression}"
-    
-    def latex_to_desmos(self, latex_expression):
-        """LaTeX式をDesmos形式に変換"""
-        # 基本的な変換ルール
-        desmos_expr = latex_expression.replace('\\', '')  # バックスラッシュを削除
-        desmos_expr = desmos_expr.replace(' ', '')  # スペースを削除
-        
-        # 一般的な変換
-        conversions = {
-            'sin': 'sin',
-            'cos': 'cos', 
-            'tan': 'tan',
-            'log': 'log',
-            'ln': 'ln',
-            'sqrt': 'sqrt',
-            'pi': 'pi',
-            'theta': 'theta',
-            'le': '<=',
-            'ge': '>=',
-            'ne': '!=',
-            'pm': '±'
-        }
-        
-        for latex, desmos in conversions.items():
-            desmos_expr = desmos_expr.replace(latex, desmos)
-        
-        return desmos_expr
     
     async def close(self):
         """リソースをクリーンアップ"""
@@ -232,9 +200,9 @@ async def on_ready():
         logger.error(f"初期化エラー: {e}")
 
 @bot.command(name='gratex')
-async def generate_latex_graph(ctx, latex_expression: str, label_size: int = 4, zoom_level: int = 0):
+async def generate_latex_graph(ctx, latex_expression: str, label_size: int = 4):
     """
-    LaTeX式からグラフを生成するコマンド
+    LaTeX式からグラフを生成するコマンド（GraTeX内部API使用）
     
     使用例:
     !gratex "x^2 + y^2 = 1"
@@ -254,11 +222,11 @@ async def generate_latex_graph(ctx, latex_expression: str, label_size: int = 4, 
     
     try:
         # 処理中メッセージ
-        processing_msg = await ctx.send("🎨 Desmosでグラフを作成中...")
+        processing_msg = await ctx.send("🎨 GraTeXでグラフを生成中...")
         
         # グラフ生成
         image_buffer = await gratex_bot.generate_graph(
-            latex_expression, label_size, zoom_level
+            latex_expression, label_size
         )
         
         # Discord画像ファイルを作成
@@ -271,11 +239,11 @@ async def generate_latex_graph(ctx, latex_expression: str, label_size: int = 4, 
             color=0x00ff00
         )
         embed.set_image(url="attachment://gratex_graph.png")
-        embed.set_footer(text="Powered by Desmos + GraTeX")
+        embed.set_footer(text="Powered by GraTeX")
         
         message = await ctx.send(file=file, embed=embed)
         
-        # リアクションを追加（ズーム機能は削除、ラベルサイズのみ）
+        # リアクションを追加（ラベルサイズ変更用）
         reactions = ['1⃣', '2⃣', '3⃣', '4⃣', '6⃣', '8⃣', '✅', '🚮']
         for reaction in reactions:
             await message.add_reaction(reaction)
@@ -358,7 +326,7 @@ async def update_graph(message, latex_expression, label_size):
             color=0x00ff00
         )
         embed.set_image(url="attachment://gratex_graph_updated.png")
-        embed.set_footer(text="Powered by Desmos + GraTeX")
+        embed.set_footer(text="Powered by GraTeX")
         
         # メッセージを編集
         await message.edit(attachments=[file], embed=embed)
