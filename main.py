@@ -33,21 +33,52 @@ def create_driver():
     options.add_argument('--disable-web-security')
     options.add_argument('--allow-running-insecure-content')
     
-    # ユーザーデータディレクトリの競合を回避
+    # ユーザーデータディレクトリの競合を回避 - より強力な一意性確保
     import tempfile
     import uuid
+    import time
+    import os
+    
+    # より一意性の高いディレクトリ名を生成
+    timestamp = int(time.time() * 1000)  # ミリ秒タイムスタンプ
+    process_id = os.getpid()  # プロセスID
+    unique_id = uuid.uuid4().hex[:8]  # 短いUUID
+    
     temp_dir = tempfile.gettempdir()
-    unique_user_data_dir = f"{temp_dir}/chrome_user_data_{uuid.uuid4()}"
+    unique_user_data_dir = f"{temp_dir}/chrome_user_data_{process_id}_{timestamp}_{unique_id}"
+    
+    # ディレクトリが既に存在する場合は削除
+    if os.path.exists(unique_user_data_dir):
+        try:
+            import shutil
+            shutil.rmtree(unique_user_data_dir)
+            print(f"Removed existing user data directory: {unique_user_data_dir}")
+        except Exception as cleanup_error:
+            print(f"Could not remove existing directory: {cleanup_error}")
+            # さらに一意なディレクトリを作成
+            unique_user_data_dir = f"{temp_dir}/chrome_user_data_{process_id}_{timestamp}_{unique_id}_fallback"
+    
     options.add_argument(f'--user-data-dir={unique_user_data_dir}')
     print(f"Using unique user data directory: {unique_user_data_dir}")
     
-    # 追加の安定性設定
+    # Railway/Docker環境での追加設定
     options.add_argument('--disable-background-timer-throttling')
     options.add_argument('--disable-backgrounding-occluded-windows')
     options.add_argument('--disable-renderer-backgrounding')
     options.add_argument('--disable-features=TranslateUI')
     options.add_argument('--disable-ipc-flooding-protection')
-    options.add_argument('--single-process')
+    
+    # シングルプロセスモードは競合の原因になる可能性があるため条件付きで使用
+    # Railway環境では通常のマルチプロセスモードを使用
+    if os.getenv('RAILWAY_ENVIRONMENT_NAME'):
+        print("Railway environment detected, using multi-process mode")
+        # Railway環境での追加設定
+        options.add_argument('--disable-dev-shm-usage')
+        options.add_argument('--disable-gpu-sandbox')
+        options.add_argument('--disable-software-rasterizer')
+    else:
+        # ローカル環境ではシングルプロセスモードを使用
+        options.add_argument('--single-process')
     
     options.add_argument('--user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
     options.headless = True
@@ -100,7 +131,10 @@ def create_driver():
             break
     
     try:
+        print("Attempting to create Chrome WebDriver...")
+        
         if chromedriver_path:
+            print(f"Using ChromeDriver at: {chromedriver_path}")
             service = Service(chromedriver_path)
             driver = webdriver.Chrome(service=service, options=options)
             print(f"WebDriver created with driver: {chromedriver_path}")
@@ -108,24 +142,105 @@ def create_driver():
             # webdriver-managerを使用
             if WEBDRIVER_MANAGER_AVAILABLE:
                 try:
+                    print("Attempting to use webdriver-manager...")
                     chromedriver_path = ChromeDriverManager().install()
                     service = Service(chromedriver_path)
                     driver = webdriver.Chrome(service=service, options=options)
                     print(f"WebDriver created with webdriver-manager: {chromedriver_path}")
                 except Exception as wm_error:
                     print(f"webdriver-manager failed: {wm_error}")
+                    print("Attempting default Chrome settings...")
                     # 最後の手段：デフォルト
                     driver = webdriver.Chrome(options=options)
                     print("WebDriver created with default settings")
             else:
+                print("webdriver-manager not available, using default Chrome...")
                 # 最後の手段：デフォルト
                 driver = webdriver.Chrome(options=options)
                 print("WebDriver created with default settings")
         
         return driver
+        
     except Exception as e:
         print(f"WebDriver creation error: {e}")
-        raise e
+        
+        # エラーが user-data-dir 関連の場合、追加の対処を試す
+        if "user data directory" in str(e).lower() or "user-data-dir" in str(e).lower():
+            print("User data directory conflict detected, trying alternative approach...")
+            
+            try:
+                # user-data-dir を完全に無効化して再試行
+                options_no_userdir = Options()
+                
+                # 基本設定を再適用（user-data-dir以外）
+                basic_args = [
+                    '--no-sandbox',
+                    '--disable-dev-shm-usage',
+                    '--disable-gpu',
+                    '--disable-extensions',
+                    '--disable-plugins',
+                    '--remote-debugging-port=9222',
+                    '--window-size=1920,1080',
+                    '--disable-web-security',
+                    '--allow-running-insecure-content',
+                    '--disable-background-timer-throttling',
+                    '--disable-backgrounding-occluded-windows',
+                    '--disable-renderer-backgrounding',
+                    '--disable-features=TranslateUI',
+                    '--disable-ipc-flooding-protection'
+                ]
+                
+                # Railway環境の追加設定
+                if os.getenv('RAILWAY_ENVIRONMENT_NAME'):
+                    basic_args.extend([
+                        '--disable-dev-shm-usage',
+                        '--disable-gpu-sandbox',
+                        '--disable-software-rasterizer'
+                    ])
+                else:
+                    basic_args.append('--single-process')
+                
+                for arg in basic_args:
+                    options_no_userdir.add_argument(arg)
+                
+                options_no_userdir.add_argument('--user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
+                options_no_userdir.headless = True
+                
+                # Chrome バイナリパスを設定
+                if chrome_binary:
+                    options_no_userdir.binary_location = chrome_binary
+                
+                print("Retrying without user-data-dir...")
+                if chromedriver_path:
+                    service = Service(chromedriver_path)
+                    driver = webdriver.Chrome(service=service, options=options_no_userdir)
+                else:
+                    driver = webdriver.Chrome(options=options_no_userdir)
+                
+                print("WebDriver created successfully without user-data-dir")
+                return driver
+                
+            except Exception as retry_error:
+                print(f"Retry without user-data-dir also failed: {retry_error}")
+        
+        # 最終的な代替手段
+        print("Attempting minimal Chrome configuration as last resort...")
+        try:
+            minimal_options = Options()
+            minimal_options.add_argument('--no-sandbox')
+            minimal_options.add_argument('--disable-dev-shm-usage')
+            minimal_options.add_argument('--headless')
+            
+            if chrome_binary:
+                minimal_options.binary_location = chrome_binary
+            
+            driver = webdriver.Chrome(options=minimal_options)
+            print("WebDriver created with minimal configuration")
+            return driver
+            
+        except Exception as final_error:
+            print(f"All WebDriver creation attempts failed. Final error: {final_error}")
+            raise e
 
 # グローバル変数として初期化は後で行う
 driver = None
@@ -151,8 +266,36 @@ def cleanup_driver():
     global driver
     if driver:
         try:
+            # ユーザーデータディレクトリのパスを取得（可能であれば）
+            user_data_dir = None
+            try:
+                # Chromeのプロセスからユーザーデータディレクトリを取得を試みる
+                capabilities = driver.capabilities
+                chrome_options = capabilities.get('goog:chromeOptions', {})
+                args = chrome_options.get('args', [])
+                for arg in args:
+                    if arg.startswith('--user-data-dir='):
+                        user_data_dir = arg.split('=', 1)[1]
+                        break
+            except:
+                pass
+            
+            print("Closing WebDriver...")
             driver.quit()
             print("WebDriver closed successfully")
+            
+            # ユーザーデータディレクトリを削除
+            if user_data_dir and os.path.exists(user_data_dir):
+                try:
+                    import shutil
+                    import time
+                    # 少し待ってからディレクトリ削除を試行
+                    time.sleep(1)
+                    shutil.rmtree(user_data_dir, ignore_errors=True)
+                    print(f"Cleaned up user data directory: {user_data_dir}")
+                except Exception as cleanup_error:
+                    print(f"Could not clean up user data directory: {cleanup_error}")
+                    
         except Exception as e:
             print(f"Error closing WebDriver: {e}")
         finally:
@@ -979,6 +1122,45 @@ async def gratex_slash(
 
 if __name__ == "__main__":
     print("=== Starting GraTeX Bot ===")
+    
+    # プロセス終了時のクリーンアップを登録
+    import atexit
+    import signal
+    
+    def cleanup_on_exit():
+        print("Performing cleanup on exit...")
+        cleanup_driver()
+        
+        # 残存するユーザーデータディレクトリを削除
+        try:
+            import tempfile
+            import glob
+            temp_dir = tempfile.gettempdir()
+            chrome_dirs = glob.glob(f"{temp_dir}/chrome_user_data_*")
+            for dir_path in chrome_dirs:
+                try:
+                    import shutil
+                    shutil.rmtree(dir_path, ignore_errors=True)
+                    print(f"Cleaned up temp directory: {dir_path}")
+                except:
+                    pass
+        except:
+            pass
+    
+    atexit.register(cleanup_on_exit)
+    
+    def signal_handler(signum, frame):
+        print(f"Received signal {signum}, cleaning up...")
+        cleanup_on_exit()
+        exit(0)
+    
+    try:
+        signal.signal(signal.SIGTERM, signal_handler)
+        signal.signal(signal.SIGINT, signal_handler)
+    except:
+        # Windowsでは一部のシグナルが利用できない場合がある
+        pass
+    
     # Railwayの環境変数からトークンを取得
     token = os.getenv("TOKEN")
     if not token:
@@ -998,5 +1180,5 @@ if __name__ == "__main__":
         traceback.print_exc()
     finally:
         # クリーンアップ
-        print("Cleaning up...")
-        cleanup_driver()
+        print("Final cleanup...")
+        cleanup_on_exit()
