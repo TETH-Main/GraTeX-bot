@@ -4,6 +4,7 @@ from discord import app_commands
 import asyncio
 import base64
 import io
+import json
 import os
 from dotenv import load_dotenv
 from playwright.async_api import async_playwright
@@ -12,7 +13,7 @@ import re
 import logging
 
 # LaTeX変換機能をインポート
-from latex_converter import convert_expression, convert_for_javascript
+from latex_converter import convert_expression
 
 # 環境変数を読み込み
 load_dotenv()
@@ -126,14 +127,16 @@ class GraTeXBot:
                     except Exception as e2:
                         logger.warning(f"フォールバックも失敗: {e2}")
             
-            # LaTeX式をGraTeX Calculator APIで直接設定
+            # LaTeX式をJavaScript用にエスケープして設定
+            latex_for_js = convert_expression(latex_expression)  # LaTeX変換のみ
             logger.info(f"LaTeX式を設定: {latex_expression}")
+            logger.info(f"LaTeX変換結果: {latex_for_js}")
             await self.page.evaluate(f"""
                 () => {{
                     if (window.GraTeX && window.GraTeX.calculator2D) {{
                         window.GraTeX.calculator2D.setBlank();
-                        window.GraTeX.calculator2D.setExpression({{latex: `{latex_expression}`}});
-                        console.log("数式を設定しました:", `{latex_expression}`);
+                        window.GraTeX.calculator2D.setExpression({{latex: {json.dumps(latex_for_js)}}});
+                        console.log("数式を設定しました:", {json.dumps(latex_for_js)});
                     }} else {{
                         throw new Error("GraTeX.calculator2D が利用できません");
                     }}
@@ -278,14 +281,16 @@ class GraTeXBot:
                     except Exception as e2:
                         logger.warning(f"フォールバックも失敗: {e2}")
             
-            # LaTeX式をGraTeX Calculator 3D APIで直接設定
+            # LaTeX式をJavaScript用にエスケープして3D APIで設定
+            latex_for_js = convert_expression(latex_expression)  # LaTeX変換のみ
             logger.info(f"3D LaTeX式を設定: {latex_expression}")
+            logger.info(f"3D LaTeX変換結果: {latex_for_js}")
             await self.page.evaluate(f"""
                 () => {{
                     if (window.GraTeX && window.GraTeX.calculator3D) {{
                         window.GraTeX.calculator3D.setBlank();
-                        window.GraTeX.calculator3D.setExpression({{latex: `{latex_expression}`}});
-                        console.log("3D数式を設定しました:", `{latex_expression}`);
+                        window.GraTeX.calculator3D.setExpression({{latex: {json.dumps(latex_for_js)}}});
+                        console.log("3D数式を設定しました:", {json.dumps(latex_for_js)});
                     }} else {{
                         throw new Error("GraTeX.calculator3D が利用できません");
                     }}

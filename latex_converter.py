@@ -314,8 +314,10 @@ class LaTeXConverter:
             return expr
     
     def convert_for_desmos(self, latex_expr):
-        """LaTeX式をDesmos/GraTeX用にエスケープ"""
-        # JavaScriptで使用するために \\ でエスケープ
+        """LaTeX式をDesmos/GraTeX用にエスケープ（廃止予定：json.dumps()を使用推奨）"""
+        # 後方互換性のため残しているが、新しいコードではjson.dumps()を使用すること
+        # JavaScriptで使用するために \ を \\ でエスケープ
+        # すでに \\ になっているものは \\\\にならないよう注意
         escaped = latex_expr.replace('\\', '\\\\')
         return escaped
 
@@ -327,6 +329,7 @@ def convert_expression(expression):
     return latex_converter.convert_to_latex(expression)
 
 def convert_for_javascript(expression):
-    """JavaScript用にエスケープした式を取得"""
+    """JavaScript用にエスケープした式を取得（廃止予定：json.dumps()を使用推奨）"""
+    # 後方互換性のため残しているが、新しいコードではjson.dumps()を使用すること
     latex_expr = latex_converter.convert_to_latex(expression)
     return latex_converter.convert_for_desmos(latex_expr)
