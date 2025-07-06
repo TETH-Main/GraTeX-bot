@@ -284,8 +284,8 @@ class GraTeXBot:
                             window.GraTeX.calculator2D.setMathBounds({{
                                 left: -{range_size},
                                 right: {range_size},
-                                bottom: -{range_size},
-                                top: {range_size}
+                                bottom: -{range_size/2},
+                                top: {range_size/2}
                             }});
                             console.log("ズームレベル適用完了");
                             return true;
