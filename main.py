@@ -174,7 +174,25 @@ async def generate_img(latex, labelSize='4', zoomLevel=0):
             initialize_driver()
         except Exception as e:
             print(f"Failed to initialize driver: {e}")
+            import traceback
+            traceback.print_exc()
             return "error"
+    else:
+        print("Driver already exists, checking status...")
+        try:
+            # ドライバーの状態をチェック
+            current_url = driver.current_url
+            window_handles = driver.window_handles
+            print(f"Driver status: URL={current_url}, Windows={len(window_handles)}")
+        except Exception as driver_check_error:
+            print(f"Driver appears to be invalid: {driver_check_error}")
+            print("Attempting to reinitialize driver...")
+            cleanup_driver()
+            try:
+                initialize_driver()
+            except Exception as reinit_error:
+                print(f"Failed to reinitialize driver: {reinit_error}")
+                return "error"
 
     try:
         print("Checking current page...")
@@ -183,16 +201,35 @@ async def generate_img(latex, labelSize='4', zoomLevel=0):
         
         # ページが正しく読み込まれているかチェック
         if "GraTeX" not in current_url:
-            print("Reloading GraTeX page...")
+            print("Not on GraTeX page, navigating...")
             driver.get('https://teth-main.github.io/GraTeX/?wide=true&credit=true')
+            print("Waiting for page to load...")
             WebDriverWait(driver, 30).until(
                 EC.presence_of_element_located((By.CLASS_NAME, "dcg-tap-container")))
+            print("Page loaded successfully")
+        else:
+            print("Already on GraTeX page")
+            
+        # ページが応答可能な状態かチェック
+        page_ready = driver.execute_script("return document.readyState === 'complete';")
+        print(f"Page ready state: {page_ready}")
+        
+        calculator_available = driver.execute_script("return typeof calculator !== 'undefined';")
+        print(f"Calculator object available: {calculator_available}")
+        
+        if not calculator_available:
+            print("WARNING: Calculator object not available, page may not be fully loaded")
+            await asyncio.sleep(3)  # 追加待機
+            calculator_available = driver.execute_script("return typeof calculator !== 'undefined';")
+            print(f"Calculator available after wait: {calculator_available}")
         
         print("Checking zoom restore button...")
         zoom_restore = driver.find_elements(By.CLASS_NAME, "dcg-action-zoomrestore")
         if zoom_restore and zoom_restore[0].is_displayed():
             zoom_restore[0].click()
             print("Zoom restore clicked")
+        else:
+            print("Zoom restore button not found or not displayed")
             
         print(f"Setting zoom level to {zoomLevel}...")
         if (zoomLevel > 0):
@@ -213,62 +250,454 @@ async def generate_img(latex, labelSize='4', zoomLevel=0):
         print(f"Setting label size to {labelSize}...")
         try:
             label_selects = driver.find_elements(By.NAME, "labelSize")
+            print(f"Found {len(label_selects)} label size selectors")
             if label_selects:
+                print(f"Label selector found, setting to value: {labelSize}")
                 Select(label_selects[0]).select_by_value(labelSize)
-                print("Label size set")
+                print("Label size set successfully")
+                
+                # 選択された値を確認
+                selected_value = Select(label_selects[0]).first_selected_option.get_attribute("value")
+                print(f"Confirmed label size set to: {selected_value}")
             else:
-                print("Label size selector not found")
+                print("ERROR: Label size selector not found - this may indicate page loading issues")
+                # ページの状態をデバッグ
+                try:
+                    page_title = driver.title
+                    print(f"Current page title: {page_title}")
+                    form_elements = driver.find_elements(By.TAG_NAME, "select")
+                    print(f"Found {len(form_elements)} select elements total")
+                    for i, select in enumerate(form_elements[:3]):  # 最初の3個だけ
+                        select_name = select.get_attribute("name")
+                        print(f"Select {i}: name='{select_name}'")
+                except Exception as debug_e:
+                    print(f"Failed to get label selector debug info: {debug_e}")
         except Exception as e:
-            print(f"Error setting label size: {e}")
+            print(f"ERROR setting label size: {e}")
+            import traceback
+            traceback.print_exc()
         
         print("Removing old expression...")
-        driver.execute_script("calculator.removeExpression({id:'3'});")
+        try:
+            driver.execute_script("calculator.removeExpression({id:'3'});")
+            print("Old expression removed successfully")
+        except Exception as e:
+            print(f"ERROR removing old expression: {e}")
         
         print(f"Setting new expression: {latex}")
-        # JavaScriptエスケープを改善
-        escaped_latex = latex.replace('\\', '\\\\').replace('`', '\\`')
-        driver.execute_script(
-            f"calculator.setExpression({{id:'1', latex: String.raw`{escaped_latex}`, color:'black'}});")
+        try:
+            # JavaScriptエスケープを改善
+            escaped_latex = latex.replace('\\', '\\\\').replace('`', '\\`')
+            print(f"Escaped LaTeX: {escaped_latex}")
+            js_command = f"calculator.setExpression({{id:'1', latex: String.raw`{escaped_latex}`, color:'black'}});"
+            print(f"Executing JavaScript: {js_command}")
+            driver.execute_script(js_command)
+            print("New expression set successfully")
+            
+            # 式が正しく設定されたかJavaScriptで確認
+            try:
+                expression_count = driver.execute_script("return calculator.getExpressions().length;")
+                print(f"Total expressions in calculator: {expression_count}")
+                
+                # 設定した式が存在するかチェック
+                expression_exists = driver.execute_script("return calculator.getExpressions().some(e => e.id === '1');")
+                print(f"Expression with id '1' exists: {expression_exists}")
+            except Exception as check_e:
+                print(f"Error checking expression state: {check_e}")
+                
+        except Exception as e:
+            print(f"ERROR setting new expression: {e}")
+            import traceback
+            traceback.print_exc()
+            return "error"
         
-        print("Waiting 5 seconds...")
+        print("Waiting 5 seconds for expression to render...")
         await asyncio.sleep(5)
         
-        print("Clicking screenshot button...")
+        print("Looking for screenshot button...")
         screenshot_buttons = driver.find_elements(By.ID, "screenshot-button")
+        print(f"Found {len(screenshot_buttons)} screenshot buttons")
+        
         if screenshot_buttons:
-            screenshot_buttons[0].click()
+            try:
+                print("Screenshot button found, analyzing element...")
+                button = screenshot_buttons[0]
+                print(f"Button displayed: {button.is_displayed()}")
+                print(f"Button enabled: {button.is_enabled()}")
+                print(f"Button tag: {button.tag_name}")
+                print(f"Button text: {button.text}")
+                print(f"Button location: {button.location}")
+                print(f"Button size: {button.size}")
+                
+                # ボタンがクリック可能かチェック
+                try:
+                    WebDriverWait(driver, 5).until(EC.element_to_be_clickable((By.ID, "screenshot-button")))
+                    print("Button is clickable according to WebDriverWait")
+                except:
+                    print("WARNING: Button may not be fully clickable yet")
+                
+                print("Attempting to click screenshot button...")
+                button.click()
+                print("Screenshot button clicked successfully")
+                
+                # クリック後の状態を確認
+                await asyncio.sleep(1)  # クリック処理の時間を与える
+                print("Checking post-click state...")
+                
+            except Exception as click_error:
+                print(f"ERROR clicking screenshot button: {click_error}")
+                import traceback
+                traceback.print_exc()
+                
+                # 代替手段を試す
+                try:
+                    print("Trying JavaScript click as fallback...")
+                    driver.execute_script("arguments[0].click();", button)
+                    print("JavaScript click succeeded")
+                except Exception as js_click_error:
+                    print(f"JavaScript click also failed: {js_click_error}")
+                    return "error"
         else:
-            print("Screenshot button not found")
+            print("ERROR: Screenshot button not found in DOM")
+            # DOMの状態をより詳しくデバッグ
+            try:
+                print("Debugging page state...")
+                page_title = driver.title
+                print(f"Page title: {page_title}")
+                
+                # 現在のページのボタン要素を全て確認
+                all_buttons = driver.find_elements(By.TAG_NAME, "button")
+                print(f"Found {len(all_buttons)} button elements")
+                for i, btn in enumerate(all_buttons[:5]):  # 最初の5個だけ
+                    btn_id = btn.get_attribute("id")
+                    btn_class = btn.get_attribute("class")
+                    btn_text = btn.text[:30] if btn.text else ""
+                    print(f"Button {i}: id='{btn_id}', class='{btn_class}', text='{btn_text}'")
+                
+                # 特定のクラスやIDパターンを持つ要素を探す
+                screenshot_related = driver.find_elements(By.XPATH, "//*[contains(@id, 'screenshot') or contains(@class, 'screenshot')]")
+                print(f"Found {len(screenshot_related)} screenshot-related elements")
+                
+                # ページが完全に読み込まれているかチェック
+                ready_state = driver.execute_script("return document.readyState;")
+                print(f"Document ready state: {ready_state}")
+                
+                # JavaScript変数の状態をチェック
+                calculator_exists = driver.execute_script("return typeof calculator !== 'undefined';")
+                print(f"Calculator object exists: {calculator_exists}")
+                
+            except Exception as debug_error:
+                print(f"Error getting page debug info: {debug_error}")
             return "error"
 
         try:
-            print("Waiting for generation container...")
-            WebDriverWait(driver, 30).until(
+            print("Waiting for generation container to appear...")
+            wait_element = WebDriverWait(driver, 30)
+            
+            # まずコンテナの存在をチェック
+            print("Checking if generation container exists in DOM...")
+            gen_containers = driver.find_elements(By.ID, "generate-container")
+            print(f"Found {len(gen_containers)} generation containers")
+            
+            if gen_containers:
+                container = gen_containers[0]
+                print(f"Container exists - displayed: {container.is_displayed()}")
+                print(f"Container style: {container.get_attribute('style')}")
+                print(f"Container class: {container.get_attribute('class')}")
+                print(f"Container size: {container.size}")
+                print(f"Container location: {container.location}")
+            
+            # 表示されるまで待機
+            generation_container = wait_element.until(
                 EC.visibility_of_element_located((By.ID, "generate-container")))
-            print("Generation container found")
+            print("Generation container became visible")
+            
+            # コンテナが表示された後の状態を確認
+            print(f"Final container state - displayed: {generation_container.is_displayed()}")
+            print(f"Final container size: {generation_container.size}")
+            
+            # コンテナ内のコンテンツを確認
+            try:
+                container_html = generation_container.get_attribute("innerHTML")
+                print(f"Container innerHTML length: {len(container_html)}")
+                if len(container_html) > 0:
+                    print(f"Container content preview: {container_html[:200]}...")
+                else:
+                    print("WARNING: Container is visible but empty")
+                    
+                # コンテナ内の子要素をチェック
+                child_elements = generation_container.find_elements(By.XPATH, ".//*")
+                print(f"Container has {len(child_elements)} child elements")
+                
+            except Exception as content_error:
+                print(f"Error checking container content: {content_error}")
+            
         except TimeoutException:
-            print("Timeout waiting for generation container")
-            driver.execute_script("calculator.removeExpression({id:'1'});")
+            print("ERROR: Timeout waiting for generation container")
+            print("This suggests the screenshot generation failed or is taking too long")
+            
+            # より詳細なデバッグ情報を収集
+            try:
+                print("=== GENERATION TIMEOUT DEBUG ===")
+                
+                # 再度コンテナの存在をチェック
+                gen_containers = driver.find_elements(By.ID, "generate-container")
+                print(f"Generation containers after timeout: {len(gen_containers)}")
+                
+                if gen_containers:
+                    container = gen_containers[0]
+                    print(f"Container exists but not visible:")
+                    print(f"  - displayed: {container.is_displayed()}")
+                    print(f"  - style: {container.get_attribute('style')}")
+                    print(f"  - class: {container.get_attribute('class')}")
+                    
+                    # CSSスタイルを詳しく確認
+                    computed_style = driver.execute_script(
+                        "return window.getComputedStyle(arguments[0]);", container)
+                    if computed_style:
+                        print(f"  - computed display: {computed_style.get('display')}")
+                        print(f"  - computed visibility: {computed_style.get('visibility')}")
+                        print(f"  - computed opacity: {computed_style.get('opacity')}")
+                
+                # エラーメッセージがあるかチェック
+                error_elements = driver.find_elements(By.CLASS_NAME, "error")
+                if error_elements:
+                    print(f"Found {len(error_elements)} error elements on page:")
+                    for i, error_elem in enumerate(error_elements):
+                        try:
+                            error_text = error_elem.text
+                            print(f"  Error {i+1}: {error_text}")
+                        except:
+                            print(f"  Error {i+1}: [Could not read text]")
+                
+                # JavaScript console errors
+                try:
+                    js_errors = driver.execute_script(
+                        "return window.console && window.console.errors ? window.console.errors : []")
+                    if js_errors:
+                        print(f"JavaScript errors: {js_errors}")
+                except:
+                    print("Could not retrieve JavaScript errors")
+                
+                # calculatorオブジェクトの状態をチェック
+                try:
+                    calculator_state = driver.execute_script("""
+                        if (typeof calculator === 'undefined') return 'Calculator not defined';
+                        try {
+                            var expressions = calculator.getExpressions();
+                            return {
+                                expressionCount: expressions.length,
+                                hasId1: expressions.some(e => e.id === '1'),
+                                calculatorReady: typeof calculator.setExpression === 'function'
+                            };
+                        } catch (e) {
+                            return 'Calculator error: ' + e.message;
+                        }
+                    """)
+                    print(f"Calculator state: {calculator_state}")
+                except Exception as calc_error:
+                    print(f"Error checking calculator state: {calc_error}")
+                
+                # ページ全体の読み込み状態
+                ready_state = driver.execute_script("return document.readyState;")
+                print(f"Document ready state: {ready_state}")
+                
+                print("=== END DEBUG ===")
+                
+            except Exception as debug_error:
+                print(f"Error during generation container debug: {debug_error}")
+            
+            # クリーンアップしてエラーを返す
+            try:
+                driver.execute_script("calculator.removeExpression({id:'1'});")
+                print("Cleaned up expression after timeout")
+            except:
+                pass
+            return "error"
+            
+        except Exception as wait_error:
+            print(f"ERROR waiting for generation container: {wait_error}")
+            import traceback
+            traceback.print_exc()
             return "error"
             
         print("Removing expression...")
-        driver.execute_script("calculator.removeExpression({id:'1'});")
+        try:
+            driver.execute_script("calculator.removeExpression({id:'1'});")
+            print("Expression removed successfully")
+        except Exception as remove_error:
+            print(f"Error removing expression: {remove_error}")
 
         print("Getting image data...")
         preview_elements = driver.find_elements(By.ID, "preview")
+        print(f"Found {len(preview_elements)} preview elements")
+        
         if preview_elements:
-            img_data = preview_elements[0].get_attribute("src")
-            print(f"Image data length: {len(img_data) if img_data else 'None'}")
-            
-            if img_data and len(img_data) > 21:
-                result = img_data[22:]  # "data:image/png;base64," を除去
-                print(f"Returning image data, length: {len(result)}")
-                return result
-            else:
-                print("Invalid image data")
+            try:
+                preview_element = preview_elements[0]
+                print(f"Preview element found:")
+                print(f"  - displayed: {preview_element.is_displayed()}")
+                print(f"  - tag: {preview_element.tag_name}")
+                print(f"  - size: {preview_element.size}")
+                print(f"  - location: {preview_element.location}")
+                
+                # 要素の属性を全て確認
+                all_attributes = driver.execute_script(
+                    "var elem = arguments[0]; var attrs = {}; "
+                    "for (var i = 0; i < elem.attributes.length; i++) { "
+                    "attrs[elem.attributes[i].name] = elem.attributes[i].value; } "
+                    "return attrs;", preview_element)
+                print(f"  - attributes: {all_attributes}")
+                
+                img_data = preview_element.get_attribute("src")
+                
+                if img_data:
+                    print(f"Image data retrieved:")
+                    print(f"  - length: {len(img_data)}")
+                    print(f"  - starts with: {img_data[:50]}...")
+                    
+                    if img_data.startswith("data:image/png;base64,"):
+                        print("Image data has correct data URL format")
+                        result = img_data[22:]  # "data:image/png;base64," を除去
+                        print(f"Base64 data extracted, length: {len(result)}")
+                        
+                        # base64データの妥当性チェック
+                        try:
+                            import base64
+                            decoded = base64.b64decode(result)
+                            print(f"Base64 decode successful:")
+                            print(f"  - decoded size: {len(decoded)} bytes")
+                            
+                            # PNG形式かチェック（PNGファイルは\x89PNG で始まる）
+                            if decoded.startswith(b'\x89PNG'):
+                                print("  - Valid PNG format detected")
+                            else:
+                                print(f"  - WARNING: Decoded data doesn't start with PNG signature")
+                                print(f"  - First 16 bytes: {decoded[:16]}")
+                            
+                            return result
+                            
+                        except Exception as decode_error:
+                            print(f"ERROR: Base64 decode failed: {decode_error}")
+                            
+                            # デコードに失敗した場合、データの詳細を確認
+                            print(f"Problematic base64 data sample: {result[:100]}...")
+                            
+                            # 不正な文字があるかチェック
+                            import re
+                            invalid_chars = re.findall(r'[^A-Za-z0-9+/=]', result)
+                            if invalid_chars:
+                                print(f"Invalid base64 characters found: {set(invalid_chars)}")
+                            
+                            return "error"
+                    elif img_data.startswith("data:image/"):
+                        print(f"Image data has different format: {img_data[:50]}...")
+                        # 他の画像形式の場合
+                        if "base64," in img_data:
+                            base64_start = img_data.find("base64,") + 7
+                            result = img_data[base64_start:]
+                            print(f"Extracted base64 from different format, length: {len(result)}")
+                            return result
+                        else:
+                            print("ERROR: Not a base64 data URL")
+                            return "error"
+                    else:
+                        print(f"ERROR: Invalid image data format")
+                        print(f"Expected 'data:image/' but got: {img_data[:100]}...")
+                        
+                        # 値が空でない場合の追加チェック
+                        if len(img_data) > 0:
+                            print(f"Non-empty src value detected, checking if it's a URL...")
+                            if img_data.startswith(("http://", "https://", "/")):
+                                print("Src appears to be a URL rather than data URL")
+                                # URLの場合の処理は今回は対象外
+                            elif img_data.startswith("blob:"):
+                                print("Src appears to be a blob URL")
+                                # blob URLの場合の処理は今回は対象外
+                        
+                        return "error"
+                else:
+                    print("ERROR: No image data in src attribute")
+                    
+                    # src属性が空の場合の追加デバッグ
+                    print("Checking other possible image attributes...")
+                    
+                    # data-src や其他の属性をチェック
+                    data_src = preview_element.get_attribute("data-src")
+                    if data_src:
+                        print(f"Found data-src: {data_src[:50]}...")
+                    
+                    # CSS background-image をチェック
+                    background_image = driver.execute_script(
+                        "return window.getComputedStyle(arguments[0]).backgroundImage;", 
+                        preview_element)
+                    if background_image and background_image != "none":
+                        print(f"Found background-image: {background_image[:50]}...")
+                    
+                    return "error"
+                    
+            except Exception as preview_error:
+                print(f"ERROR processing preview element: {preview_error}")
+                import traceback
+                traceback.print_exc()
                 return "error"
         else:
-            print("Preview element not found")
+            print("ERROR: Preview element not found in DOM")
+            
+            # プレビュー要素が見つからない場合の詳細デバッグ
+            try:
+                print("=== PREVIEW ELEMENT DEBUG ===")
+                
+                # 生成コンテナ内を詳しく調べる
+                gen_containers = driver.find_elements(By.ID, "generate-container")
+                if gen_containers:
+                    container = gen_containers[0]
+                    print("Generation container content analysis:")
+                    
+                    container_html = container.get_attribute("innerHTML")
+                    print(f"  - innerHTML length: {len(container_html)}")
+                    
+                    if len(container_html) > 0:
+                        print(f"  - content preview: {container_html[:300]}...")
+                        
+                        # コンテナ内のすべての要素を列挙
+                        child_elements = container.find_elements(By.XPATH, ".//*")
+                        print(f"  - child elements: {len(child_elements)}")
+                        
+                        for i, child in enumerate(child_elements[:10]):  # 最初の10個
+                            tag = child.tag_name
+                            child_id = child.get_attribute("id")
+                            child_class = child.get_attribute("class")
+                            print(f"    Child {i}: <{tag}> id='{child_id}' class='{child_class}'")
+                
+                # 類似のIDを持つ要素を探す
+                print("Searching for elements with similar IDs...")
+                preview_like = driver.find_elements(By.XPATH, "//*[contains(@id, 'preview') or contains(@class, 'preview')]")
+                print(f"Found {len(preview_like)} preview-like elements:")
+                for i, elem in enumerate(preview_like[:5]):
+                    elem_id = elem.get_attribute("id")
+                    elem_class = elem.get_attribute("class")
+                    elem_tag = elem.tag_name
+                    print(f"  Preview-like {i}: <{elem_tag}> id='{elem_id}' class='{elem_class}'")
+                
+                # img要素を全て確認
+                print("Analyzing all img elements...")
+                img_elements = driver.find_elements(By.TAG_NAME, "img")
+                print(f"Found {len(img_elements)} img elements:")
+                for i, img in enumerate(img_elements[:10]):  # 最初の10個
+                    img_id = img.get_attribute("id")
+                    img_class = img.get_attribute("class")
+                    img_src = img.get_attribute("src")
+                    img_displayed = img.is_displayed()
+                    print(f"  Image {i}: id='{img_id}' class='{img_class}' displayed={img_displayed}")
+                    if img_src:
+                        print(f"    src: {img_src[:50]}...")
+                
+                print("=== END DEBUG ===")
+                
+            except Exception as debug_error:
+                print(f"Error during preview element debug: {debug_error}")
+            
             return "error"
             
     except Exception as e:
