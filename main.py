@@ -10,6 +10,9 @@ from playwright.async_api import async_playwright
 from PIL import Image
 import re
 import logging
+import sympy as sp
+from sympy.parsing.sympy_parser import parse_expr
+from sympy import latex
 
 # 環境変数を読み込み
 load_dotenv()
@@ -114,13 +117,17 @@ class GraTeXBot:
                         logger.warning(f"フォールバックも失敗: {e2}")
             
             # LaTeX式をGraTeX Calculator APIで直接設定
-            logger.info(f"LaTeX式を設定: {latex_expression}")
+            # まず、plain textをLaTeX形式に変換
+            converted_latex = convert_to_latex(latex_expression)
+            logger.info(f"変換前: {latex_expression}")
+            logger.info(f"変換後: {converted_latex}")
+            
             await self.page.evaluate(f"""
                 () => {{
                     if (window.GraTeX && window.GraTeX.calculator2D) {{
                         window.GraTeX.calculator2D.setBlank();
-                        window.GraTeX.calculator2D.setExpression({{latex: `{latex_expression}`}});
-                        console.log("数式を設定しました:", `{latex_expression}`);
+                        window.GraTeX.calculator2D.setExpression({{latex: '{converted_latex}'}});
+                        console.log("数式を設定しました:", '{converted_latex}');
                     }} else {{
                         throw new Error("GraTeX.calculator2D が利用できません");
                     }}
@@ -256,13 +263,17 @@ class GraTeXBot:
                         logger.warning(f"フォールバックも失敗: {e2}")
             
             # LaTeX式をGraTeX Calculator 3D APIで直接設定
-            logger.info(f"3D LaTeX式を設定: {latex_expression}")
+            # まず、plain textをLaTeX形式に変換
+            converted_latex = convert_to_latex(latex_expression)
+            logger.info(f"3D変換前: {latex_expression}")
+            logger.info(f"3D変換後: {converted_latex}")
+            
             await self.page.evaluate(f"""
                 () => {{
                     if (window.GraTeX && window.GraTeX.calculator3D) {{
                         window.GraTeX.calculator3D.setBlank();
-                        window.GraTeX.calculator3D.setExpression({{latex: `{latex_expression}`}});
-                        console.log("3D数式を設定しました:", `{latex_expression}`);
+                        window.GraTeX.calculator3D.setExpression({{latex: '{converted_latex}'}});
+                        console.log("3D数式を設定しました:", '{converted_latex}');
                     }} else {{
                         throw new Error("GraTeX.calculator3D が利用できません");
                     }}
@@ -494,7 +505,7 @@ async def on_ready():
 
 @bot.tree.command(name="gratex", description="LaTeX式からグラフを生成します")
 @app_commands.describe(
-    latex="LaTeX式またはDesmos記法の数式（例: y = sin(x), z = x^2 + y^2）",
+    latex="数式（例: y=sin(x), z=x^2+y^2, y=|x|, y=(x+1)/(x-2)）※自動でLaTeX形式に変換されます",
     mode="グラフの種類（2D または 3D）",
     label_size="軸ラベルのサイズ",
     zoom_level="ズームレベル（2Dのみ、-3～3）"
@@ -995,22 +1006,133 @@ async def update_3d_graph(message, latex_expression, label_size):
     except Exception as e:
         logger.error(f"3Dグラフ更新エラー: {e}")
 
-# Keep-alive用サーバーを起動
-from server import keep_alive
-
-if __name__ == "__main__":
-    # サーバーを起動
-    keep_alive()
+# 数式変換関数
+def convert_to_latex(expression):
+    """
+    Plain textの数式をLaTeX形式に変換する関数
     
-    # Botを起動
-    token = os.getenv('TOKEN')
-    if not token:
-        raise ValueError("Discord Bot Token が設定されていません")
+    Parameters:
+    - expression: Plain textの数式 (例: "y=sin(x)", "x^2+y^2=1")
     
+    Returns:
+    - LaTeX形式の文字列 (例: "y=\\sin{\\left(x\\right)}")
+    """
     try:
-        bot.run(token)
-    except KeyboardInterrupt:
-        logger.info("Bot を停止しています...")
-    finally:
-        # クリーンアップ
-        asyncio.run(gratex_bot.close())
+        # 既にLaTeX形式の場合はそのまま返す
+        if '\\' in expression and ('\\sin' in expression or '\\cos' in expression or '\\frac' in expression or '\\left' in expression):
+            logger.info(f"既にLaTeX形式と判断: {expression}")
+            return expression
+        
+        # 基本的な前処理
+        expr = expression.strip()
+        
+        # 等式の場合は左辺と右辺を分けて処理
+        if '=' in expr:
+            parts = expr.split('=', 1)
+            left_side = parts[0].strip()
+            right_side = parts[1].strip()
+            
+            # 各辺をLaTeX変換
+            left_latex = convert_single_expression_to_latex(left_side)
+            right_latex = convert_single_expression_to_latex(right_side)
+            
+            result = f"{left_latex}={right_latex}"
+        else:
+            # 単一の数式の場合
+            result = convert_single_expression_to_latex(expr)
+        
+        # JavaScriptで使用するためにバックスラッシュをエスケープ
+        escaped_result = result.replace('\\', '\\\\')
+        
+        logger.info(f"数式変換: '{expression}' -> '{result}' -> エスケープ後: '{escaped_result}'")
+        return escaped_result
+        
+    except Exception as e:
+        logger.warning(f"LaTeX変換に失敗、元の式を使用: {expression}, エラー: {e}")
+        return expression
+
+def convert_single_expression_to_latex(expr):
+    """
+    単一の数式をLaTeX形式に変換
+    """
+    try:
+        # 特殊な置換処理（sympyパース前）
+        expr = preprocess_expression(expr)
+        
+        # sympyで解析
+        parsed_expr = parse_expr(expr, transformations='all')
+        
+        # LaTeX形式に変換
+        latex_expr = latex(parsed_expr)
+        
+        # 後処理
+        latex_expr = postprocess_latex(latex_expr)
+        
+        return latex_expr
+        
+    except Exception as e:
+        logger.warning(f"sympy変換失敗: {expr}, エラー: {e}")
+        # フォールバック: 手動変換
+        return manual_latex_conversion(expr)
+
+def preprocess_expression(expr):
+    """
+    sympy解析前の前処理
+    """
+    # 絶対値記号の変換 |x| -> Abs(x)
+    expr = re.sub(r'\|([^|]+)\|', r'Abs(\1)', expr)
+    
+    # 分数記号の変換 (x+1)/(x-2) -> (x+1)/(x-2) (sympyが自動処理)
+    
+    # 三角関数の修正
+    expr = re.sub(r'\bsin\b', 'sin', expr)
+    expr = re.sub(r'\bcos\b', 'cos', expr)
+    expr = re.sub(r'\btan\b', 'tan', expr)
+    expr = re.sub(r'\blog\b', 'log', expr)
+    expr = re.sub(r'\bln\b', 'ln', expr)
+    expr = re.sub(r'\bsqrt\b', 'sqrt', expr)
+    
+    return expr
+
+def postprocess_latex(latex_expr):
+    """
+    LaTeX変換後の後処理
+    """
+    # sympyの出力を調整
+    
+    # 絶対値記号を適切な形式に
+    latex_expr = latex_expr.replace(r'\left|', r'\left|').replace(r'\right|', r'\right|')
+    
+    # 分数を適切な形式に（sympyは既に\fracを使用）
+    
+    # 三角関数の括弧を適切に
+    latex_expr = re.sub(r'\\sin\{([^}]+)\}', r'\\sin\\left(\1\\right)', latex_expr)
+    latex_expr = re.sub(r'\\cos\{([^}]+)\}', r'\\cos\\left(\1\\right)', latex_expr)
+    latex_expr = re.sub(r'\\tan\{([^}]+)\}', r'\\tan\\left(\1\\right)', latex_expr)
+    
+    return latex_expr
+
+def manual_latex_conversion(expr):
+    """
+    sympyが失敗した場合の手動変換フォールバック
+    """
+    # 基本的な手動変換
+    latex_expr = expr
+    
+    # 絶対値
+    latex_expr = re.sub(r'\|([^|]+)\|', r'\\left|\1\\right|', latex_expr)
+    
+    # 三角関数
+    latex_expr = re.sub(r'\bsin\(([^)]+)\)', r'\\sin\\left(\1\\right)', latex_expr)
+    latex_expr = re.sub(r'\bcos\(([^)]+)\)', r'\\cos\\left(\1\\right)', latex_expr)
+    latex_expr = re.sub(r'\btan\(([^)]+)\)', r'\\tan\\left(\1\\right)', latex_expr)
+    
+    # 分数（基本的なパターン）
+    latex_expr = re.sub(r'\(([^)]+)\)/\(([^)]+)\)', r'\\frac{\1}{\2}', latex_expr)
+    
+    # 平方根
+    latex_expr = re.sub(r'\bsqrt\(([^)]+)\)', r'\\sqrt{\1}', latex_expr)
+    
+    return latex_expr
+
+# ...existing code...
