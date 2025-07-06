@@ -11,6 +11,9 @@ from PIL import Image
 import re
 import logging
 
+# LaTeX変換機能をインポート
+from latex_converter import convert_expression, convert_for_javascript
+
 # 環境変数を読み込み
 load_dotenv()
 
@@ -79,6 +82,16 @@ class GraTeXBot:
         try:
             if not self.page:
                 await self.initialize_browser()
+            
+            # 入力式をLaTeX形式に変換
+            original_expr = latex_expression
+            try:
+                latex_expression = convert_expression(latex_expression)
+                if latex_expression != original_expr:
+                    logger.info(f"式を変換: {original_expr} -> {latex_expression}")
+            except Exception as e:
+                logger.warning(f"LaTeX変換に失敗、元の式を使用: {e}")
+                latex_expression = original_expr
             
             # 現在のURLがGraTeXでない場合は移動
             current_url = self.page.url
@@ -215,6 +228,16 @@ class GraTeXBot:
         try:
             if not self.page:
                 await self.initialize_browser()
+            
+            # 入力式をLaTeX形式に変換
+            original_expr = latex_expression
+            try:
+                latex_expression = convert_expression(latex_expression)
+                if latex_expression != original_expr:
+                    logger.info(f"3D式を変換: {original_expr} -> {latex_expression}")
+            except Exception as e:
+                logger.warning(f"3D LaTeX変換に失敗、元の式を使用: {e}")
+                latex_expression = original_expr
             
             # 現在のURLがGraTeXでない場合は移動
             current_url = self.page.url
@@ -562,6 +585,15 @@ async def gratex_slash(
         return
     
     try:
+        # 入力式をLaTeX形式に変換
+        original_latex = latex
+        converted_latex = convert_expression(latex)
+        conversion_info = ""
+        
+        if converted_latex != original_latex:
+            conversion_info = f"\n**変換後:** `{converted_latex}`"
+            logger.info(f"式を変換: {original_latex} -> {converted_latex}")
+        
         # 処理中メッセージ
         mode_text = "2D" if mode.lower() == "2d" else "3D"
         await interaction.response.send_message(f"🎨 GraTeXで{mode_text}グラフを生成中...")
@@ -580,7 +612,7 @@ async def gratex_slash(
             # 結果を送信
             embed = discord.Embed(
                 title="📊 GraTeX 2Dグラフ",
-                description=f"**LaTeX式:** `{latex}`\n**ラベルサイズ:** {label_size}\n**ズームレベル:** {zoom_level}{zoom_info}",
+                description=f"**入力式:** `{original_latex}`{conversion_info}\n**ラベルサイズ:** {label_size}\n**ズームレベル:** {zoom_level}{zoom_info}",
                 color=0x00ff00
             )
             embed.set_footer(text="Powered by GraTeX 2D")
@@ -594,7 +626,7 @@ async def gratex_slash(
             # 結果を送信
             embed = discord.Embed(
                 title="📊 GraTeX 3Dグラフ",
-                description=f"**LaTeX式:** `{latex}`\n**ラベルサイズ:** {label_size}\n**モード:** 3D",
+                description=f"**入力式:** `{original_latex}`{conversion_info}\n**ラベルサイズ:** {label_size}\n**モード:** 3D",
                 color=0x0099ff
             )
             embed.set_footer(text="Powered by GraTeX 3D")

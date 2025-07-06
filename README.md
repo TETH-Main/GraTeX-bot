@@ -5,11 +5,38 @@ LaTeX数式を**スラッシュコマンド**で受け取り、**GraTeX内部API
 ## 🚀 特徴
 
 - **2D/3D統合対応**: 単一の`/gratex`コマンドで2Dグラフと3Dグラフの両方に対応
-- **Discordスラッシュコマンド**: 直感的なDiscord UI体験
+- **Discordスラッシュコマンド**: 直感的なDiscord UI体験（ドロップダウンメニュー対応）
+- **自動LaTeX変換**: プレーンな数学記法（`y=sin(x)`）を自動でLaTeX形式（`y=\sin\left(x\right)`）に変換
 - **GraTeX内部API直接使用**: Desmosを経由せず、`GraTeX.calculator2D/3D.setExpression()`で直接数式入力
 - **インタラクティブ機能**: リアクションによるリアルタイムズーム・ラベルサイズ変更
 - **ズームレベル管理**: 2Dグラフで-3～+3のズームレベルによる精密な表示制御
-- **軽量設計**: Playwright + bottle による最適化されたライブラリ構成
+- **軽量設計**: Playwright + bottle + sympy による最適化されたライブラリ構成
+
+## 📝 数式入力方法
+
+### 簡単記法（推奨）
+ユーザーは複雑なLaTeX記法を覚える必要がありません！
+
+```bash
+# 簡単な記法で入力
+y = sin(x)           # 自動変換 → y = \sin\left(x\right)
+y = x/2              # 自動変換 → y = \frac{x}{2}
+y = sqrt(x^2 + 1)    # 自動変換 → y = \sqrt{x^2 + 1}
+z = (x+1)/(x-1)      # 自動変換 → z = \frac{x+1}{x-1}
+```
+
+### 対応する変換
+| 入力記法 | LaTeX変換結果 |
+|---------|-------------|
+| `sin(x)`, `cos(x)`, `tan(x)` | `\sin\left(x\right)`, `\cos\left(x\right)`, `\tan\left(x\right)` |
+| `ln(x)`, `log(x)` | `\ln\left(x\right)`, `\log\left(x\right)` |
+| `sqrt(x)` | `\sqrt{x}` |
+| `exp(x)` | `e^{x}` |
+| `abs(x)` | `\left|x\right|` |
+| `a/b` | `\frac{a}{b}` |
+| `(a)/(b)` | `\frac{a}{b}` |
+| `θ`, `π` | `\theta`, `\pi` |
+| `x^2`, `x**2` | `x^2` |
 
 ## 🔄 ワークフロー
 
@@ -146,10 +173,56 @@ GraTeX-bot/
 
 ### 📋 コマンド例
 
-#### 2Dグラフ
+#### 2Dグラフ（簡単記法）
 ```bash
-# 基本的な数式（円）
+# 基本的な三角関数（自動変換）
+/gratex latex:y = sin(x)
+
+# 多項式（簡単記法）
+/gratex latex:y = x^2 + 2x + 1
+
+# 分数関数（自動でfrac変換）
+/gratex latex:y = x/2 mode:2d label_size:6
+
+# 平方根（自動変換）
+/gratex latex:y = sqrt(x^2 + 1) zoom_level:1
+
+# 複雑な式（複数関数の組み合わせ）
+/gratex latex:y = sin(x)/cos(x) mode:2d
+
+# 指数関数（簡単記法）
+/gratex latex:y = exp(x+1) label_size:8
+
+# 極座標（ギリシャ文字自動変換）
+/gratex latex:r = cos(3θ) zoom_level:-1
+
+# 円・楕円（プレーン記法）
 /gratex latex:x^2 + y^2 = 1
+/gratex latex:x^2/4 + y^2/9 = 1
+```
+
+#### 3Dグラフ（簡単記法）
+```bash
+# 基本的な3D曲面
+/gratex latex:z = x^2 + y^2 mode:3d
+
+# 波面（三角関数自動変換）
+/gratex latex:z = sin(x) * cos(y) mode:3d label_size:6
+
+# 球（プレーン記法）
+/gratex latex:x^2 + y^2 + z^2 = 25 mode:3d
+
+# 複雑な3D曲面（分数自動変換）
+/gratex latex:z = (x^2 - y^2)/(x^2 + y^2 + 1) mode:3d
+
+# 楕円体
+/gratex latex:x^2/4 + y^2/9 + z^2/16 = 1 mode:3d
+
+# 円錐（平方根自動変換）
+/gratex latex:z = sqrt(x^2 + y^2) mode:3d
+```
+
+#### 従来のLaTeX記法（引き続きサポート）
 
 # 明示的に2Dモード指定
 /gratex latex:y = sin(x) mode:2d
