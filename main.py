@@ -21,6 +21,9 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Discord.pyのWarningを抑制（音声機能は使用しないため）
+logging.getLogger('discord.client').setLevel(logging.ERROR)
+
 # Bot設定（スラッシュコマンド専用）
 intents = discord.Intents.default()
 intents.message_content = True
