@@ -632,6 +632,7 @@ async def gratex_slash(
     
     try:
         # 入力式をLaTeX形式に変換
+        mode_text = "2D" if mode.lower() == "2d" else "3D"  # エラーハンドリングで使用するため先に定義
         original_latex = latex
         converted_latex = convert_expression(latex)
         conversion_info = ""
@@ -641,7 +642,6 @@ async def gratex_slash(
             logger.info(f"式を変換: {original_latex} -> {converted_latex}")
         
         # 処理中メッセージ
-        mode_text = "2D" if mode.lower() == "2d" else "3D"
         await interaction.response.send_message(f"🎨 GraTeXで{mode_text}グラフを生成中...")
         
         # モードに応じてグラフ生成
@@ -684,8 +684,8 @@ async def gratex_slash(
         file = discord.File(image_buffer, filename=f"gratex_{mode.lower()}_graph.png")
         embed.set_image(url=f"attachment://gratex_{mode.lower()}_graph.png")
         
-        # フォローアップメッセージで画像を送信
-        message = await interaction.followup.send(file=file, embed=embed)
+        # 処理中メッセージを編集して最終結果を表示
+        message = await interaction.edit_original_response(content=None, attachments=[file], embed=embed)
         
         # リアクションを追加
         for reaction in reactions:
@@ -699,7 +699,13 @@ async def gratex_slash(
         
     except Exception as e:
         logger.error(f"{mode_text}グラフ生成エラー: {e}")
-        await interaction.followup.send(f"❌ {mode_text}グラフの生成に失敗しました: {str(e)}")
+        # エラーが発生した場合も元のメッセージを編集
+        error_embed = discord.Embed(
+            title="❌ エラー",
+            description=f"{mode_text}グラフの生成に失敗しました: {str(e)}",
+            color=0xff0000
+        )
+        await interaction.edit_original_response(content=None, embed=error_embed)
 
 async def setup_reaction_handler_slash(interaction, message, latex_expression, current_label_size):
     """スラッシュコマンド用のリアクション処理のセットアップ"""
