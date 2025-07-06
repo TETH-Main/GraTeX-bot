@@ -35,15 +35,15 @@ def create_driver():
     
     # Railway/Nixpacks環境でのChrome設定
     chrome_paths = [
-        '/nix/store/*/bin/chromium',  # Nixpacks
-        '/usr/bin/chromium-browser',  # Ubuntu
-        '/usr/bin/chromium',          # Alternative
-        '/usr/bin/google-chrome',     # Google Chrome
+        '/nix/store/*/bin/chromium',     # Nixpacks
+        '/usr/bin/chromium-browser',     # Aptfile
+        '/usr/bin/chromium',             # Alternative
+        '/usr/bin/google-chrome',        # Google Chrome
     ]
     
     chromedriver_paths = [
-        '/nix/store/*/bin/chromedriver',  # Nixpacks
-        '/usr/bin/chromedriver',          # System
+        '/nix/store/*/bin/chromedriver', # Nixpacks
+        '/usr/bin/chromedriver',         # Aptfile/System
     ]
     
     # Chrome バイナリパスを探す

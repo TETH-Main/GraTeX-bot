@@ -1,14 +1,7 @@
-# Railway Nixpacks configuration
-# This file helps Railway properly configure the environment for Chrome and Selenium
+# Railway Nixpacks configuration for Chrome and Selenium
 
 [phases.setup]
-nixPkgs = ['python311', 'chromium', 'chromedriver']
-
-[phases.install]
-cmds = ['pip install -r requirements.txt']
-
-[phases.build]
-cmds = ['echo "Build completed"']
+nixPkgs = ['chromium', 'chromedriver']
 
 [start]
 cmd = 'python main.py'
