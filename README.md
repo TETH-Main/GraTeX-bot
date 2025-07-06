@@ -70,6 +70,29 @@ After generating a graph, you can use reactions to:
    python main.py
    ```
 
+## Troubleshooting
+
+### Common Issues on Railway
+
+1. **ChromeDriver not found error:**
+   - Railway automatically installs Chromium and ChromeDriver via nixpacks.toml
+   - Check the Railway logs for WebDriver initialization messages
+
+2. **WebDriver timeout errors:**
+   - The bot retries WebDriver creation with multiple fallback methods
+   - Check if the GraTeX website is accessible
+
+3. **Memory issues:**
+   - Railway free tier has memory limits
+   - The bot is configured with minimal Chrome arguments to reduce memory usage
+
+### Deployment Notes
+
+- Uses nixpacks.toml for proper Chrome/ChromeDriver installation
+- Includes multiple fallback mechanisms for WebDriver creation
+- Automatically detects Chrome binary location in Railway environment
+- Includes comprehensive error handling and logging
+
 ## Technical Details
 
 - Uses Selenium WebDriver to interact with GraTeX web interface
