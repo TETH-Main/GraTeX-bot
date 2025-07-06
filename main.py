@@ -221,22 +221,39 @@ async def on_ready():
 @bot.command()
 async def gratex(ctx, arg, labelSize='4', zoomLevel=0):
   if (arg == "help"):
-    await ctx.send('''
-    You get a formula in latex format and a function graph in one image with this bot. The command is `!gratex \"{latex}\"` and the formula must be enclosed in \" \".
-    ex) `!gratex \"\\cos x\\le\\cos y\"`
+    embed = discord.Embed(
+      title="🧮 GraTeX Bot - Help",
+      description="Generate mathematical graphs from LaTeX formulas with interactive controls",
+      color=0x00ff00
+    )
     
-    __The output image will be given a reaction.__
-    2⃣3⃣4⃣6⃣ : change the size of the label(=labelSize)
-    🔎 : zoomin
-    🔭 : zoomout
-    ✅ : complete(Note: if there is no response for 20 seconds, the process is automatically completed.)
-    🚮 : delete
-
-    __extended command__
-    `!gratex \"{latex}\" labelSize zoomLevel`
-    labelSize supports four as shown in the stamp above.
-    Enter zoomLevel as an integer value.
-    ''')
+    embed.add_field(
+      name="📖 Basic Usage",
+      value='`!gratex "latex_formula"`\nFormula must be enclosed in quotes\n\n**Example:**\n`!gratex "\\cos x\\le\\cos y"`',
+      inline=False
+    )
+    
+    embed.add_field(
+      name="🎛️ Interactive Controls",
+      value="2⃣3⃣4⃣6⃣ : Change label size\n🔎 : Zoom in\n🔭 : Zoom out\n✅ : Complete editing\n🚮 : Delete message",
+      inline=False
+    )
+    
+    embed.add_field(
+      name="⚙️ Advanced Usage",
+      value='`!gratex "latex" labelSize zoomLevel`\n\n**Parameters:**\n• labelSize: 1, 2, 3, 4, 6, 8\n• zoomLevel: integer value',
+      inline=False
+    )
+    
+    embed.add_field(
+      name="⏱️ Note",
+      value="If no response for 20 seconds, editing automatically completes",
+      inline=False
+    )
+    
+    embed.set_footer(text="Powered by GraTeX | Made with ❤️")
+    
+    await ctx.send(embed=embed)
     return
 
   if (not labelSize in ['1', '2', '3', '4', '6', '8']):
