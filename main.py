@@ -210,6 +210,93 @@ class GraTeXBot:
         except Exception as e:
             logger.error(f"クリーンアップエラー: {e}")
 
+    async def zoom_desmos_graph(self, zoom_direction):
+        """GraTeX内のDesmosグラフをズームイン/アウト（ビューポート操作）"""
+        try:
+            # 現在のビューポートを取得
+            current_viewport = await self.page.evaluate('''
+                () => {
+                    if (window.GraTeX && window.GraTeX.calculator2D) {
+                        try {
+                            const state = window.GraTeX.calculator2D.getState();
+                            return state.graph.viewport;
+                        } catch (e) {
+                            console.error("ビューポート取得エラー:", e);
+                            return null;
+                        }
+                    }
+                    return null;
+                }
+            ''')
+            
+            if not current_viewport:
+                logger.warning("現在のビューポートを取得できませんでした")
+                return False
+            
+            logger.info(f"現在のビューポート: {current_viewport}")
+            
+            # 新しいビューポートを計算
+            xmin = current_viewport.get('xmin', -10)
+            xmax = current_viewport.get('xmax', 10)
+            ymin = current_viewport.get('ymin', -10)
+            ymax = current_viewport.get('ymax', 10)
+            
+            # 現在の範囲の中心と幅/高さを計算
+            x_center = (xmin + xmax) / 2
+            y_center = (ymin + ymax) / 2
+            x_range = xmax - xmin
+            y_range = ymax - ymin
+            
+            if zoom_direction == 'in':
+                # ズームイン：範囲を半分にする（拡大）
+                new_x_range = x_range / 2
+                new_y_range = y_range / 2
+            else:
+                # ズームアウト：範囲を2倍にする（縮小）
+                new_x_range = x_range * 2
+                new_y_range = y_range * 2
+            
+            # 新しいビューポートを計算
+            new_xmin = x_center - new_x_range / 2
+            new_xmax = x_center + new_x_range / 2
+            new_ymin = y_center - new_y_range / 2
+            new_ymax = y_center + new_y_range / 2
+            
+            logger.info(f"新しいビューポート: xmin={new_xmin}, xmax={new_xmax}, ymin={new_ymin}, ymax={new_ymax}")
+            
+            # 新しいビューポートを設定
+            result = await self.page.evaluate(f'''
+                () => {{
+                    if (window.GraTeX && window.GraTeX.calculator2D) {{
+                        try {{
+                            window.GraTeX.calculator2D.setMathBounds({{
+                                left: {new_xmin},
+                                right: {new_xmax},
+                                bottom: {new_ymin},
+                                top: {new_ymax}
+                            }});
+                            console.log("ビューポートを設定しました");
+                            return true;
+                        }} catch (e) {{
+                            console.error("ビューポート設定エラー:", e);
+                            return false;
+                        }}
+                    }}
+                    return false;
+                }}
+            ''')
+            
+            logger.info(f"ビューポート設定結果: {result}")
+            
+            # ズーム操作後に少し待機
+            await asyncio.sleep(1)
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"Desmosズーム操作エラー: {e}")
+            return False
+
 # グローバルインスタンス
 gratex_bot = GraTeXBot()
 
@@ -267,8 +354,8 @@ async def generate_latex_graph(ctx, latex_expression: str, label_size: int = 4):
         
         message = await ctx.send(file=file, embed=embed)
         
-        # リアクションを追加（ラベルサイズ変更用）
-        reactions = ['1⃣', '2⃣', '3⃣', '4⃣', '6⃣', '8⃣', '✅', '🚮']
+        # リアクションを追加（ラベルサイズ変更用 + ズーム機能）
+        reactions = ['1⃣', '2⃣', '3⃣', '4⃣', '6⃣', '8⃣', '🔍', '🔭', '✅', '🚮']
         for reaction in reactions:
             await message.add_reaction(reaction)
         
@@ -295,7 +382,7 @@ async def setup_reaction_handler(ctx, message, latex_expression, current_label_s
         return (
             user == ctx.author and 
             reaction.message.id == message.id and
-            str(reaction.emoji) in ['1⃣', '2⃣', '3⃣', '4⃣', '6⃣', '8⃣', '✅', '🚮']
+            str(reaction.emoji) in ['1⃣', '2⃣', '3⃣', '4⃣', '6⃣', '8⃣', '🔍', '🔭', '✅', '🚮']
         )
     
     timeout_duration = 300  # 5分
@@ -323,6 +410,14 @@ async def setup_reaction_handler(ctx, message, latex_expression, current_label_s
                 if new_label_size != current_label_size:
                     await update_graph(message, latex_expression, new_label_size)
                     current_label_size = new_label_size
+                    
+            elif emoji == '🔍':
+                # 拡大（ズームイン）
+                await zoom_graph(message, latex_expression, current_label_size, 'in')
+                
+            elif emoji == '🔭':
+                # 縮小（ズームアウト）
+                await zoom_graph(message, latex_expression, current_label_size, 'out')
             
             # リアクションを削除
             await reaction.remove(user)
@@ -357,6 +452,105 @@ async def update_graph(message, latex_expression, label_size):
         
     except Exception as e:
         logger.error(f"グラフ更新エラー: {e}")
+
+async def zoom_graph(message, latex_expression, label_size, zoom_direction):
+    """グラフをズームイン/アウトして更新"""
+    try:
+        # Desmosでズーム操作を実行
+        zoom_text = "拡大" if zoom_direction == 'in' else "縮小"
+        logger.info(f"ビューポート{zoom_text}操作を実行中...")
+        
+        # ビューポート操作を実行
+        zoom_result = await gratex_bot.zoom_desmos_graph(zoom_direction)
+        
+        if not zoom_result:
+            logger.warning(f"ビューポート{zoom_text}操作が失敗しました")
+            return
+        
+        # スクリーンショットボタンをクリックして新しい画像を生成
+        await gratex_bot.page.click('#screenshot-button')
+        
+        # 画像生成完了を待機
+        await gratex_bot.page.wait_for_function(
+            """
+            () => {
+                const previewImg = document.getElementById('preview');
+                return previewImg && previewImg.src && previewImg.src.length > 100;
+            }
+            """,
+            timeout=20000
+        )
+        
+        # 生成された画像を取得
+        image_data = await gratex_bot.page.evaluate('''
+            () => {
+                const previewImg = document.getElementById('preview');
+                if (previewImg && previewImg.src) {
+                    if (previewImg.src.startsWith('data:')) {
+                        return previewImg.src;
+                    }
+                    
+                    const canvas = document.createElement('canvas');
+                    const ctx = canvas.getContext('2d');
+                    
+                    canvas.width = previewImg.naturalWidth || previewImg.width;
+                    canvas.height = previewImg.naturalHeight || previewImg.height;
+                    
+                    ctx.drawImage(previewImg, 0, 0);
+                    return canvas.toDataURL('image/png');
+                }
+                
+                return null;
+            }
+        ''')
+        
+        if image_data:
+            # base64データを画像に変換
+            image_bytes = base64.b64decode(image_data.split(',')[1])
+            image_buffer = io.BytesIO(image_bytes)
+            
+            # 新しいファイルを作成
+            file = discord.File(image_buffer, filename=f"gratex_graph_zoomed.png")
+            
+            # 変更後のビューポートを取得して表示
+            new_viewport = await gratex_bot.page.evaluate('''
+                () => {
+                    if (window.GraTeX && window.GraTeX.calculator2D) {
+                        try {
+                            const state = window.GraTeX.calculator2D.getState();
+                            return state.graph.viewport;
+                        } catch (e) {
+                            return null;
+                        }
+                    }
+                    return null;
+                }
+            ''')
+            
+            viewport_info = ""
+            if new_viewport:
+                x_range = new_viewport.get('xmax', 0) - new_viewport.get('xmin', 0)
+                y_range = new_viewport.get('ymax', 0) - new_viewport.get('ymin', 0)
+                viewport_info = f"\n**表示範囲:** X: {x_range:.1f}, Y: {y_range:.1f}"
+            
+            # Embedを更新
+            embed = discord.Embed(
+                title=f"📊 GraTeX グラフ ({zoom_text}済み)",
+                description=f"**LaTeX式:** `{latex_expression}`\n**ラベルサイズ:** {label_size}{viewport_info}",
+                color=0x00ff00
+            )
+            embed.set_image(url="attachment://gratex_graph_zoomed.png")
+            embed.set_footer(text="Powered by GraTeX")
+            
+            # メッセージを編集
+            await message.edit(attachments=[file], embed=embed)
+            
+            logger.info(f"✅ ビューポート{zoom_text}操作完了")
+        else:
+            logger.error("ズーム後の画像取得に失敗")
+        
+    except Exception as e:
+        logger.error(f"ズーム操作エラー: {e}")
 
 @bot.event
 async def on_command_error(ctx, error):
