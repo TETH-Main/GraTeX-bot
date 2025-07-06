@@ -22,11 +22,24 @@ Discord bot for generating LaTeX formula graphs using GraTeX.
 2. **Set environment variables in Railway:**
    - `TOKEN`: Your Discord bot token
 
-3. **Deploy:**
+3. **Deploy Options:**
+   
+   **Option A: Using Dockerfile (Recommended)**
+   - Railway will automatically detect and use the Dockerfile
+   - More reliable Chrome/ChromeDriver setup
+   - Consistent environment across deployments
+   
+   **Option B: Using Nixpacks**
+   - Delete or rename the Dockerfile
+   - Railway will use nixpacks.toml and Aptfile
+   - May require additional troubleshooting
+
+4. **Deploy:**
    Railway will automatically:
-   - Install Python dependencies from `requirements.txt`
-   - Set up Chrome and ChromeDriver via buildpacks
-   - Start the bot using the command in `Procfile`
+   - Build the Docker image OR use Nixpacks
+   - Install Chrome and ChromeDriver
+   - Install Python dependencies
+   - Start the bot
 
 ### Environment Variables
 

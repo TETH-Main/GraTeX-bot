@@ -33,15 +33,16 @@ def create_driver():
     options.add_argument('--user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
     options.headless = True
     
-    # Railway/Nixpacks環境でのChrome設定
+    # Railway/Docker環境でのChrome設定
     chrome_paths = [
+        '/usr/bin/google-chrome',        # Docker/Google Chrome
         '/nix/store/*/bin/chromium',     # Nixpacks
         '/usr/bin/chromium-browser',     # Aptfile
         '/usr/bin/chromium',             # Alternative
-        '/usr/bin/google-chrome',        # Google Chrome
     ]
     
     chromedriver_paths = [
+        '/usr/local/bin/chromedriver',   # Docker
         '/nix/store/*/bin/chromedriver', # Nixpacks
         '/usr/bin/chromedriver',         # Aptfile/System
     ]
