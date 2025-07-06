@@ -142,7 +142,13 @@ class LaTeXConverter:
             # 絶対値の変換
             result = re.sub(r'\babs\(([^)]+)\)', r'\\left|\1\\right|', result)
             
-            # 分数の変換（慎重に）
+            # 不等号の変換（分数変換の前に実行して、分数変換で不等号が壊れないようにする）
+            result = result.replace('<=', '\\le')
+            result = result.replace('>=', '\\ge')
+            result = result.replace('<', '\\lt')
+            result = result.replace('>', '\\gt')
+            
+            # 分数の変換（三角関数変換後に実行）
             result = self.simple_fraction_conversion(result)
             
             # ギリシャ文字の変換
@@ -173,6 +179,24 @@ class LaTeXConverter:
             
             # "=" の後の単純な分数を探す
             expr = re.sub(r'([^=]+=\s*)([^/\s]+)/([^/\s]+)(?=\s|$)', replace_simple_fraction, expr)
+            
+            # パターン3: 不等式や単純な分数表現の変換
+            # 等式を含まず、単純な分数パターンを検出
+            if '=' not in expr:
+                # 単純な分数 a/b（スペースや演算子で区切られている）
+                # 不等号が含まれている場合は \\le, \\ge などになっているので対応
+                expr = re.sub(r'\b([^/\s\\]+)/([^/\s\\]+)\b', r'\\frac{\1}{\2}', expr)
+            else:
+                # 等式を含む場合でも不等号の前後の分数を変換
+                # 例: y = x/2 > 1 の x/2 部分
+                def replace_fraction_in_expression(match):
+                    full_expr = match.group(0)
+                    # 分数パターンを探して変換（不等号記号も考慮）
+                    result = re.sub(r'\b([^/\s\\]+)/([^/\s\\]+)\b', r'\\frac{\1}{\2}', full_expr)
+                    return result
+                
+                # 不等号（LaTeX化済み）を含む部分の分数を変換
+                expr = re.sub(r'[^=]*\\[lg][te][^=]*', replace_fraction_in_expression, expr)
             
             return expr
             
@@ -218,6 +242,12 @@ class LaTeXConverter:
                 result = re.sub(pattern, replacement, result)
                 if result != old_result:
                     logger.debug(f"変換適用: {pattern} -> {old_result} => {result}")
+            
+            # 不等号の変換（順序重要：>= や <= を先に処理）
+            result = result.replace('<=', '\\le')
+            result = result.replace('>=', '\\ge')
+            result = result.replace('<', '\\lt')
+            result = result.replace('>', '\\gt')
             
             # 分数変換（より慎重に）
             result = self.convert_fractions(result)
@@ -305,6 +335,12 @@ class LaTeXConverter:
             result = expr
             for pattern, replacement in conversions:
                 result = re.sub(pattern, replacement, result)
+            
+            # 不等号の変換（順序重要：>= や <= を先に処理）
+            result = result.replace('<=', '\\le')
+            result = result.replace('>=', '\\ge')
+            result = result.replace('<', '\\lt')
+            result = result.replace('>', '\\gt')
             
             logger.info(f"手動変換完了: {expr} -> {result}")
             return result

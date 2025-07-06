@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 # Bot設定（スラッシュコマンド専用）
 intents = discord.Intents.default()
 intents.message_content = True
-bot = commands.Bot(command_prefix=None, intents=intents)
+bot = commands.Bot(command_prefix='!', intents=intents)
 
 class GraTeXBot:
     def __init__(self):
@@ -81,8 +81,8 @@ class GraTeXBot:
     async def generate_graph(self, latex_expression, label_size=4, zoom_level=0):
         """LaTeX式からグラフ画像を生成（GraTeX内部API使用）"""
         try:
-            if not self.page:
-                await self.initialize_browser()
+            # ブラウザの状態を確認・初期化
+            await self.ensure_browser_ready()
             
             # 入力式をLaTeX形式に変換
             original_expr = latex_expression
@@ -229,8 +229,8 @@ class GraTeXBot:
     async def generate_3d_graph(self, latex_expression, label_size=4, zoom_level=0):
         """LaTeX式から3Dグラフ画像を生成（GraTeX内部API使用）"""
         try:
-            if not self.page:
-                await self.initialize_browser()
+            # ブラウザの状態を確認・初期化
+            await self.ensure_browser_ready()
             
             # 入力式をLaTeX形式に変換
             original_expr = latex_expression
@@ -498,6 +498,47 @@ class GraTeXBot:
         except Exception as e:
             logger.error(f"2Dモード切り替えエラー: {e}")
             return False
+
+    async def ensure_browser_ready(self):
+        """ブラウザが使用可能な状態であることを確認"""
+        try:
+            if self.browser is None or self.page is None:
+                logger.info("ブラウザが初期化されていません。再初期化中...")
+                await self.initialize_browser()
+                return
+            
+            # ページが閉じられているかチェック
+            if self.page.is_closed():
+                logger.info("ページが閉じられています。再初期化中...")
+                await self.initialize_browser()
+                return
+                
+            # ブラウザが閉じられているかチェック
+            try:
+                await self.page.evaluate("() => true")
+            except Exception:
+                logger.info("ブラウザ接続が無効です。再初期化中...")
+                await self.initialize_browser()
+                
+        except Exception as e:
+            logger.error(f"ブラウザ状態確認エラー: {e}")
+            await self.initialize_browser()
+
+    async def cleanup_browser(self):
+        """ブラウザをクリーンアップ"""
+        try:
+            if self.page and not self.page.is_closed():
+                await self.page.close()
+            if self.browser:
+                await self.browser.close()
+            if hasattr(self, 'playwright'):
+                await self.playwright.stop()
+            logger.info("ブラウザのクリーンアップが完了しました")
+        except Exception as e:
+            logger.warning(f"ブラウザクリーンアップ中にエラー: {e}")
+        finally:
+            self.page = None
+            self.browser = None
 
 # グローバルインスタンス
 gratex_bot = GraTeXBot()
@@ -955,8 +996,12 @@ async def zoom_graph(message, latex_expression, label_size, zoom_direction):
 
 @bot.event
 async def on_disconnect():
-    """Bot切断時のクリーンアップ"""
-    await gratex_bot.close()
+    """Bot切断時の処理"""
+    logger.info("Botが切断されました。ブラウザをクリーンアップ中...")
+    try:
+        await gratex_bot.cleanup_browser()
+    except Exception as e:
+        logger.error(f"切断時のクリーンアップエラー: {e}")
 
 async def setup_reaction_handler_3d(interaction, message, latex_expression, current_label_size):
     """3D用のリアクション処理のセットアップ"""
