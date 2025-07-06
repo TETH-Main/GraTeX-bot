@@ -1,31 +1,33 @@
-# Use Python 3.11 slim image
+# Railway.app用設定ファイル
+# https://docs.railway.app/reference/dockerfile
+
 FROM python:3.11-slim
 
-# Install system dependencies
+# システムパッケージの更新とPlaywright用依存関係をインストール
 RUN apt-get update && apt-get install -y \
     wget \
     gnupg \
-    unzip \
-    curl \
-    xvfb \
-    chromium \
-    chromium-driver \
+    && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Set working directory
+# 作業ディレクトリを設定
 WORKDIR /app
 
-# Copy requirements and install Python dependencies
+# 依存関係ファイルをコピー
 COPY requirements.txt .
+
+# Python依存関係をインストール
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application code
+# Playwrightブラウザをインストール
+RUN playwright install chromium
+RUN playwright install-deps chromium
+
+# アプリケーションファイルをコピー
 COPY . .
 
-# Set environment variables
-ENV GOOGLE_CHROME_BIN=/usr/bin/chromium
-ENV CHROMEDRIVER_PATH=/usr/bin/chromedriver
-ENV PYTHONUNBUFFERED=1
+# ポート設定
+EXPOSE $PORT
 
-# Run the bot
+# アプリケーション起動
 CMD ["python", "main.py"]
