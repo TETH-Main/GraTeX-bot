@@ -17,15 +17,16 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Bot設定
+# Bot設定（スラッシュコマンド専用）
 intents = discord.Intents.default()
 intents.message_content = True
-bot = commands.Bot(command_prefix='!', intents=intents)
+bot = commands.Bot(command_prefix=None, intents=intents)
 
 class GraTeXBot:
     def __init__(self):
         self.browser = None
         self.page = None
+        self.current_zoom_level = 0  # ズームレベルを追跡
         
     async def initialize_browser(self):
         """Playwrightブラウザを初期化"""
@@ -72,7 +73,7 @@ class GraTeXBot:
             logger.error(f"ブラウザの初期化に失敗: {e}")
             raise
     
-    async def generate_graph(self, latex_expression, label_size=4):
+    async def generate_graph(self, latex_expression, label_size=4, zoom_level=0):
         """LaTeX式からグラフ画像を生成（GraTeX内部API使用）"""
         try:
             if not self.page:
@@ -121,6 +122,27 @@ class GraTeXBot:
                     }}
                 }}
             """)
+            
+            # ズームレベルを適用
+            if zoom_level != 0:
+                await self.apply_zoom_level(zoom_level)
+            else:
+                # デフォルトビューポート（-10~10）を設定
+                await self.page.evaluate('''
+                    () => {
+                        if (window.GraTeX && window.GraTeX.calculator2D) {
+                            window.GraTeX.calculator2D.setMathBounds({
+                                left: -10,
+                                right: 10,
+                                bottom: -10,
+                                top: 10
+                            });
+                        }
+                    }
+                ''')
+            
+            # 現在のズームレベルを更新
+            self.current_zoom_level = zoom_level
             
             # 少し待機してグラフが描画されるのを待つ
             await asyncio.sleep(3)
@@ -213,80 +235,28 @@ class GraTeXBot:
     async def zoom_desmos_graph(self, zoom_direction):
         """GraTeX内のDesmosグラフをズームイン/アウト（ビューポート操作）"""
         try:
-            # 現在のビューポートを取得
-            current_viewport = await self.page.evaluate('''
-                () => {
-                    if (window.GraTeX && window.GraTeX.calculator2D) {
-                        try {
-                            const state = window.GraTeX.calculator2D.getState();
-                            return state.graph.viewport;
-                        } catch (e) {
-                            console.error("ビューポート取得エラー:", e);
-                            return null;
-                        }
-                    }
-                    return null;
-                }
-            ''')
+            # 現在のズームレベルを取得
+            old_zoom_level = self.current_zoom_level
             
-            if not current_viewport:
-                logger.warning("現在のビューポートを取得できませんでした")
+            # ズームレベルを更新
+            if zoom_direction == 'in':
+                new_zoom_level = self.current_zoom_level + 1
+            else:
+                new_zoom_level = self.current_zoom_level - 1
+            
+            # ズームレベルを制限範囲内に収める
+            new_zoom_level = max(-3, min(3, new_zoom_level))
+            
+            # 制限に達している場合は何もしない
+            if new_zoom_level == old_zoom_level:
+                logger.info(f"ズームレベルが制限に達しています: {new_zoom_level}")
                 return False
             
-            logger.info(f"現在のビューポート: {current_viewport}")
+            self.current_zoom_level = new_zoom_level
+            logger.info(f"新しいズームレベル: {self.current_zoom_level}")
             
-            # 新しいビューポートを計算
-            xmin = current_viewport.get('xmin', -10)
-            xmax = current_viewport.get('xmax', 10)
-            ymin = current_viewport.get('ymin', -10)
-            ymax = current_viewport.get('ymax', 10)
-            
-            # 現在の範囲の中心と幅/高さを計算
-            x_center = (xmin + xmax) / 2
-            y_center = (ymin + ymax) / 2
-            x_range = xmax - xmin
-            y_range = ymax - ymin
-            
-            if zoom_direction == 'in':
-                # ズームイン：範囲を半分にする（拡大）
-                new_x_range = x_range / 2
-                new_y_range = y_range / 2
-            else:
-                # ズームアウト：範囲を2倍にする（縮小）
-                new_x_range = x_range * 2
-                new_y_range = y_range * 2
-            
-            # 新しいビューポートを計算
-            new_xmin = x_center - new_x_range / 2
-            new_xmax = x_center + new_x_range / 2
-            new_ymin = y_center - new_y_range / 2
-            new_ymax = y_center + new_y_range / 2
-            
-            logger.info(f"新しいビューポート: xmin={new_xmin}, xmax={new_xmax}, ymin={new_ymin}, ymax={new_ymax}")
-            
-            # 新しいビューポートを設定
-            result = await self.page.evaluate(f'''
-                () => {{
-                    if (window.GraTeX && window.GraTeX.calculator2D) {{
-                        try {{
-                            window.GraTeX.calculator2D.setMathBounds({{
-                                left: {new_xmin},
-                                right: {new_xmax},
-                                bottom: {new_ymin},
-                                top: {new_ymax}
-                            }});
-                            console.log("ビューポートを設定しました");
-                            return true;
-                        }} catch (e) {{
-                            console.error("ビューポート設定エラー:", e);
-                            return false;
-                        }}
-                    }}
-                    return false;
-                }}
-            ''')
-            
-            logger.info(f"ビューポート設定結果: {result}")
+            # 新しいズームレベルを適用
+            result = await self.apply_zoom_level(self.current_zoom_level)
             
             # ズーム操作後に少し待機
             await asyncio.sleep(1)
@@ -295,6 +265,57 @@ class GraTeXBot:
             
         except Exception as e:
             logger.error(f"Desmosズーム操作エラー: {e}")
+            return False
+
+    async def apply_zoom_level(self, zoom_level):
+        """指定されたズームレベルを適用"""
+        try:
+            # ズームレベルの制限
+            zoom_level = max(-3, min(3, zoom_level))
+            
+            # ベース範囲（zoom_level = 0の場合）
+            base_range = 10
+            
+            # ズームレベルに基づいて範囲を計算
+            # zoom_level > 0: 拡大（範囲を小さく）
+            # zoom_level < 0: 縮小（範囲を大きく）
+            if zoom_level > 0:
+                # 拡大：各レベルで範囲を半分にする
+                range_size = base_range / (2 ** zoom_level)
+            elif zoom_level < 0:
+                # 縮小：各レベルで範囲を2倍にする
+                range_size = base_range * (2 ** abs(zoom_level))
+            else:
+                range_size = base_range
+            
+            logger.info(f"ズームレベル {zoom_level} を適用: 範囲 ±{range_size}")
+            
+            # ビューポートを設定
+            result = await self.page.evaluate(f'''
+                () => {{
+                    if (window.GraTeX && window.GraTeX.calculator2D) {{
+                        try {{
+                            window.GraTeX.calculator2D.setMathBounds({{
+                                left: -{range_size},
+                                right: {range_size},
+                                bottom: -{range_size},
+                                top: {range_size}
+                            }});
+                            console.log("ズームレベル適用完了");
+                            return true;
+                        }} catch (e) {{
+                            console.error("ズームレベル適用エラー:", e);
+                            return false;
+                        }}
+                    }}
+                    return false;
+                }}
+            ''')
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"ズームレベル適用エラー: {e}")
             return False
 
 # グローバルインスタンス
@@ -307,80 +328,93 @@ async def on_ready():
     try:
         await gratex_bot.initialize_browser()
         logger.info("GraTeX Bot の初期化が完了しました")
+        
+        # スラッシュコマンドを同期
+        try:
+            synced = await bot.tree.sync()
+            logger.info(f"スラッシュコマンド同期完了: {len(synced)} コマンド")
+        except Exception as e:
+            logger.error(f"スラッシュコマンド同期エラー: {e}")
+            
     except Exception as e:
         logger.error(f"初期化エラー: {e}")
 
-@bot.command(name='gratex')
-async def generate_latex_graph(ctx, latex_expression: str, label_size: int = 4):
+@bot.tree.command(name="gratex", description="LaTeX式からグラフを生成します")
+async def gratex_slash(
+    interaction: discord.Interaction, 
+    latex: str, 
+    label_size: int = 4, 
+    zoom_level: int = 0
+):
     """
-    LaTeX式からグラフを生成するコマンド（GraTeX内部API使用）
+    スラッシュコマンド: LaTeX式からグラフを生成
     
-    使用例:
-    !gratex "x^2 + y^2 = 1"
-    !gratex "y = sin(x)" 3
-    !gratex "r = cos(3θ)" 6
+    Parameters:
+    - latex: LaTeX式またはDesmos記法の数式
+    - label_size: ラベルサイズ（1, 2, 3, 4, 6, 8）
+    - zoom_level: ズームレベル（負数で縮小、正数で拡大）
     """
     
     # パラメータ検証
     if label_size not in [1, 2, 3, 4, 6, 8]:
-        await ctx.send("❌ ラベルサイズは 1, 2, 3, 4, 6, 8 のいずれかを指定してください")
+        await interaction.response.send_message("❌ ラベルサイズは 1, 2, 3, 4, 6, 8 のいずれかを指定してください", ephemeral=True)
         return
     
-    # LaTeX式の簡単な検証
-    if not latex_expression.strip():
-        await ctx.send("❌ LaTeX式を入力してください")
+    if not latex.strip():
+        await interaction.response.send_message("❌ LaTeX式を入力してください", ephemeral=True)
+        return
+    
+    if zoom_level < -3 or zoom_level > 3:
+        await interaction.response.send_message("❌ ズームレベルは -3 から 3 の範囲で指定してください", ephemeral=True)
         return
     
     try:
         # 処理中メッセージ
-        processing_msg = await ctx.send("🎨 GraTeXでグラフを生成中...")
+        await interaction.response.send_message("🎨 GraTeXでグラフを生成中...")
         
         # グラフ生成
-        image_buffer = await gratex_bot.generate_graph(
-            latex_expression, label_size
-        )
+        image_buffer = await gratex_bot.generate_graph(latex, label_size, zoom_level)
         
         # Discord画像ファイルを作成
         file = discord.File(image_buffer, filename=f"gratex_graph.png")
         
+        # ズームレベル情報
+        zoom_info = ""
+        if zoom_level > 0:
+            zoom_info = f" (拡大 x{2**zoom_level})"
+        elif zoom_level < 0:
+            zoom_info = f" (縮小 x{2**abs(zoom_level)})"
+        
         # 結果を送信
         embed = discord.Embed(
             title="📊 GraTeX グラフ",
-            description=f"**LaTeX式:** `{latex_expression}`\n**ラベルサイズ:** {label_size}",
+            description=f"**LaTeX式:** `{latex}`\n**ラベルサイズ:** {label_size}\n**ズームレベル:** {zoom_level}{zoom_info}",
             color=0x00ff00
         )
         embed.set_image(url="attachment://gratex_graph.png")
         embed.set_footer(text="Powered by GraTeX")
         
-        message = await ctx.send(file=file, embed=embed)
+        # フォローアップメッセージで画像を送信
+        message = await interaction.followup.send(file=file, embed=embed)
         
         # リアクションを追加（ラベルサイズ変更用 + ズーム機能）
         reactions = ['1⃣', '2⃣', '3⃣', '4⃣', '6⃣', '8⃣', '🔍', '🔭', '✅', '🚮']
         for reaction in reactions:
             await message.add_reaction(reaction)
         
-        # 処理中メッセージを削除
-        await processing_msg.delete()
-        
         # リアクション処理を設定
-        await setup_reaction_handler(ctx, message, latex_expression, label_size)
+        await setup_reaction_handler_slash(interaction, message, latex, label_size)
         
     except Exception as e:
         logger.error(f"グラフ生成エラー: {e}")
-        await ctx.send(f"❌ グラフの生成に失敗しました: {str(e)}")
-        
-        # 処理中メッセージがある場合は削除
-        try:
-            await processing_msg.delete()
-        except:
-            pass
+        await interaction.followup.send(f"❌ グラフの生成に失敗しました: {str(e)}")
 
-async def setup_reaction_handler(ctx, message, latex_expression, current_label_size):
-    """リアクション処理のセットアップ"""
+async def setup_reaction_handler_slash(interaction, message, latex_expression, current_label_size):
+    """スラッシュコマンド用のリアクション処理のセットアップ"""
     
     def check(reaction, user):
         return (
-            user == ctx.author and 
+            user == interaction.user and 
             reaction.message.id == message.id and
             str(reaction.emoji) in ['1⃣', '2⃣', '3⃣', '4⃣', '6⃣', '8⃣', '🔍', '🔭', '✅', '🚮']
         )
@@ -408,16 +442,16 @@ async def setup_reaction_handler(ctx, message, latex_expression, current_label_s
                 new_label_size = size_map[emoji]
                 
                 if new_label_size != current_label_size:
-                    await update_graph(message, latex_expression, new_label_size)
+                    await update_graph_slash(message, latex_expression, new_label_size)
                     current_label_size = new_label_size
                     
             elif emoji == '🔍':
                 # 拡大（ズームイン）
-                await zoom_graph(message, latex_expression, current_label_size, 'in')
+                await zoom_graph_slash(message, latex_expression, current_label_size, 'in')
                 
             elif emoji == '🔭':
                 # 縮小（ズームアウト）
-                await zoom_graph(message, latex_expression, current_label_size, 'out')
+                await zoom_graph_slash(message, latex_expression, current_label_size, 'out')
             
             # リアクションを削除
             await reaction.remove(user)
@@ -429,8 +463,124 @@ async def setup_reaction_handler(ctx, message, latex_expression, current_label_s
             logger.error(f"リアクション処理エラー: {e}")
             break
 
+async def update_graph_slash(message, latex_expression, label_size):
+    """スラッシュコマンド用: グラフを更新"""
+    try:
+        # 新しいグラフを生成（現在のズームレベルを維持）
+        image_buffer = await gratex_bot.generate_graph(latex_expression, label_size, gratex_bot.current_zoom_level)
+        
+        # 新しいファイルを作成
+        file = discord.File(image_buffer, filename=f"gratex_graph_updated.png")
+        
+        # ズームレベル情報
+        zoom_info = ""
+        if gratex_bot.current_zoom_level > 0:
+            zoom_info = f" (拡大 x{2**gratex_bot.current_zoom_level})"
+        elif gratex_bot.current_zoom_level < 0:
+            zoom_info = f" (縮小 x{2**abs(gratex_bot.current_zoom_level)})"
+        
+        # Embedを更新
+        embed = discord.Embed(
+            title="📊 GraTeX グラフ (更新済み)",
+            description=f"**LaTeX式:** `{latex_expression}`\n**ラベルサイズ:** {label_size}\n**ズームレベル:** {gratex_bot.current_zoom_level}{zoom_info}",
+            color=0x00ff00
+        )
+        embed.set_image(url="attachment://gratex_graph_updated.png")
+        embed.set_footer(text="Powered by GraTeX")
+        
+        # メッセージを編集
+        await message.edit(attachments=[file], embed=embed)
+        
+    except Exception as e:
+        logger.error(f"グラフ更新エラー: {e}")
+
+async def zoom_graph_slash(message, latex_expression, label_size, zoom_direction):
+    """スラッシュコマンド用: グラフをズームイン/アウトして更新"""
+    try:
+        # ズーム操作を実行
+        zoom_text = "拡大" if zoom_direction == 'in' else "縮小"
+        logger.info(f"ビューポート{zoom_text}操作を実行中...")
+        
+        # ビューポート操作を実行
+        zoom_result = await gratex_bot.zoom_desmos_graph(zoom_direction)
+        
+        if not zoom_result:
+            logger.warning(f"ビューポート{zoom_text}操作が失敗しました")
+            return
+        
+        # スクリーンショットボタンをクリックして新しい画像を生成
+        await gratex_bot.page.click('#screenshot-button')
+        
+        # 画像生成完了を待機
+        await gratex_bot.page.wait_for_function(
+            """
+            () => {
+                const previewImg = document.getElementById('preview');
+                return previewImg && previewImg.src && previewImg.src.length > 100;
+            }
+            """,
+            timeout=20000
+        )
+        
+        # 生成された画像を取得
+        image_data = await gratex_bot.page.evaluate('''
+            () => {
+                const previewImg = document.getElementById('preview');
+                if (previewImg && previewImg.src) {
+                    if (previewImg.src.startsWith('data:')) {
+                        return previewImg.src;
+                    }
+                    
+                    const canvas = document.createElement('canvas');
+                    const ctx = canvas.getContext('2d');
+                    
+                    canvas.width = previewImg.naturalWidth || previewImg.width;
+                    canvas.height = previewImg.naturalHeight || previewImg.height;
+                    
+                    ctx.drawImage(previewImg, 0, 0);
+                    return canvas.toDataURL('image/png');
+                }
+                
+                return null;
+            }
+        ''')
+        
+        if image_data:
+            # base64データを画像に変換
+            image_bytes = base64.b64decode(image_data.split(',')[1])
+            image_buffer = io.BytesIO(image_bytes)
+            
+            # 新しいファイルを作成
+            file = discord.File(image_buffer, filename=f"gratex_graph_zoomed.png")
+            
+            # ズームレベル情報
+            zoom_info = ""
+            if gratex_bot.current_zoom_level > 0:
+                zoom_info = f" (拡大 x{2**gratex_bot.current_zoom_level})"
+            elif gratex_bot.current_zoom_level < 0:
+                zoom_info = f" (縮小 x{2**abs(gratex_bot.current_zoom_level)})"
+            
+            # Embedを更新
+            embed = discord.Embed(
+                title=f"📊 GraTeX グラフ ({zoom_text}済み)",
+                description=f"**LaTeX式:** `{latex_expression}`\n**ラベルサイズ:** {label_size}\n**ズームレベル:** {gratex_bot.current_zoom_level}{zoom_info}",
+                color=0x00ff00
+            )
+            embed.set_image(url="attachment://gratex_graph_zoomed.png")
+            embed.set_footer(text="Powered by GraTeX")
+            
+            # メッセージを編集
+            await message.edit(attachments=[file], embed=embed)
+            
+            logger.info(f"✅ ビューポート{zoom_text}操作完了")
+        else:
+            logger.error("ズーム後の画像取得に失敗")
+        
+    except Exception as e:
+        logger.error(f"ズーム操作エラー: {e}")
+
 async def update_graph(message, latex_expression, label_size):
-    """グラフを更新"""
+    """レガシー用: グラフを更新（下位互換性のため保持）"""
     try:
         # 新しいグラフを生成
         image_buffer = await gratex_bot.generate_graph(latex_expression, label_size)
@@ -551,17 +701,6 @@ async def zoom_graph(message, latex_expression, label_size, zoom_direction):
         
     except Exception as e:
         logger.error(f"ズーム操作エラー: {e}")
-
-@bot.event
-async def on_command_error(ctx, error):
-    """エラーハンドリング"""
-    if isinstance(error, commands.MissingRequiredArgument):
-        await ctx.send("❌ LaTeX式を指定してください。例: `!gratex \"x^2 + y^2 = 1\"`")
-    elif isinstance(error, commands.BadArgument):
-        await ctx.send("❌ パラメータが正しくありません。")
-    else:
-        logger.error(f"コマンドエラー: {error}")
-        await ctx.send("❌ エラーが発生しました。しばらく時間をおいて再試行してください。")
 
 @bot.event
 async def on_disconnect():
