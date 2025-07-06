@@ -40,15 +40,31 @@ class GraTeXBot:
                     '--disable-dev-shm-usage',
                     '--disable-gpu',
                     '--disable-web-security',
-                    '--disable-features=VizDisplayCompositor'
+                    '--disable-features=VizDisplayCompositor',
+                    '--disable-background-timer-throttling',
+                    '--disable-backgrounding-occluded-windows',
+                    '--disable-renderer-backgrounding'
                 ]
             )
             
             self.page = await self.browser.new_page()
             
-            # GraTeXページにアクセス
-            await self.page.goto('https://teth-main.github.io/GraTeX/?wide=true&credit=true')
-            await self.page.wait_for_load_state('networkidle')
+            # タイムアウトを延長
+            self.page.set_default_timeout(30000)
+            
+            # GraTeXページにアクセス（リトライ付き）
+            max_retries = 3
+            for attempt in range(max_retries):
+                try:
+                    await self.page.goto('https://teth-main.github.io/GraTeX/?wide=true&credit=true', 
+                                        wait_until='networkidle', timeout=30000)
+                    logger.info(f"GraTeXページへのアクセス成功 (試行 {attempt + 1})")
+                    break
+                except Exception as e:
+                    if attempt == max_retries - 1:
+                        raise e
+                    logger.warning(f"GraTeXページアクセス失敗 (試行 {attempt + 1}): {e}")
+                    await asyncio.sleep(2)
             
             logger.info("ブラウザの初期化が完了しました")
             
@@ -71,18 +87,26 @@ class GraTeXBot:
             # GraTeX.calculator2Dが利用可能になるまで待機
             await self.page.wait_for_function(
                 "() => window.GraTeX && window.GraTeX.calculator2D",
-                timeout=10000
+                timeout=15000
             )
             
             # ラベルサイズを事前に設定
-            if label_size in [1, 2, 2.5, 3, 4, 6, 8]:
+            if label_size in [1, 2, 3, 4, 6, 8]:
                 try:
-                    label_selects = await self.page.query_selector_all('select.form-control')
-                    if len(label_selects) >= 2:  # 2番目のselectがラベルサイズ
-                        await label_selects[1].select_option(str(label_size))
-                        logger.info(f"ラベルサイズを{label_size}に設定")
+                    # name="labelSize"のselectを探す
+                    label_select = await self.page.wait_for_selector('select[name="labelSize"]', timeout=5000)
+                    await label_select.select_option(str(label_size))
+                    logger.info(f"ラベルサイズを{label_size}に設定")
                 except Exception as e:
-                    logger.warning(f"ラベルサイズの設定に失敗: {e}")
+                    logger.warning(f"ラベルサイズの設定に失敗、フォールバック: {e}")
+                    # フォールバック: form-controlクラスのselectを使用
+                    try:
+                        label_selects = await self.page.query_selector_all('select.form-control')
+                        if len(label_selects) >= 2:  # 2番目のselectがラベルサイズ
+                            await label_selects[1].select_option(str(label_size))
+                            logger.info(f"フォールバックでラベルサイズを{label_size}に設定")
+                    except Exception as e2:
+                        logger.warning(f"フォールバックも失敗: {e2}")
             
             # LaTeX式をGraTeX Calculator APIで直接設定
             logger.info(f"LaTeX式を設定: {latex_expression}")
@@ -99,7 +123,7 @@ class GraTeXBot:
             """)
             
             # 少し待機してグラフが描画されるのを待つ
-            await asyncio.sleep(2)
+            await asyncio.sleep(3)
             
             # Generateボタンをクリック
             logger.info("スクリーンショットボタンをクリック...")
@@ -114,7 +138,7 @@ class GraTeXBot:
                     return previewImg && previewImg.src && previewImg.src.length > 100;
                 }
                 """,
-                timeout=15000
+                timeout=20000
             )
             
             # 生成された画像をid="preview"から取得
@@ -314,7 +338,7 @@ async def update_graph(message, latex_expression, label_size):
     """グラフを更新"""
     try:
         # 新しいグラフを生成
-        image_buffer = await gratex_bot.generate_graph(latex_expression, label_size, 0)
+        image_buffer = await gratex_bot.generate_graph(latex_expression, label_size)
         
         # 新しいファイルを作成
         file = discord.File(image_buffer, filename=f"gratex_graph_updated.png")
